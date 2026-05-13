@@ -8,7 +8,7 @@ import { useCommandPalette } from '@/components/command-palette';
 import { RiFontSize, RiShareLine } from 'react-icons/ri';
 import { RiDashboardLine, RiTranslate } from 'react-icons/ri';
 import { VscSymbolColor } from 'react-icons/vsc';
-import { PiDotsThreeVerticalBold, PiRobot, PiSpeakerHigh } from 'react-icons/pi';
+import { PiBrain, PiDotsThreeVerticalBold, PiRobot, PiSpeakerHigh } from 'react-icons/pi';
 import { LiaHandPointerSolid } from 'react-icons/lia';
 import { IoAccessibilityOutline } from 'react-icons/io5';
 import {
@@ -32,6 +32,7 @@ import ControlPanel from './ControlPanel';
 import LangPanel from './LangPanel';
 import MiscPanel from './MiscPanel';
 import AIPanel from './AIPanel';
+import LocalLLMPanel from './LocalLLMPanel';
 import TTSPanel from './TTSPanel';
 
 export type SettingsPanelType =
@@ -42,6 +43,7 @@ export type SettingsPanelType =
   | 'TTS'
   | 'Language'
   | 'AI'
+  | 'LocalLLM'
   | 'Integrations'
   | 'Custom';
 export type SettingsPanelPanelProp = {
@@ -118,6 +120,11 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       disabled: process.env.NODE_ENV === 'production',
     },
     {
+      tab: 'LocalLLM',
+      icon: PiBrain,
+      label: _('Local LLM'),
+    },
+    {
       tab: 'Integrations',
       icon: RiShareLine,
       label: _('Integrations'),
@@ -179,6 +186,7 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     TTS: null,
     Language: null,
     AI: null,
+    LocalLLM: null,
     Integrations: null,
     Custom: null,
   });
@@ -213,6 +221,7 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
         tts: 'TTS',
         language: 'Language',
         ai: 'AI',
+        localllm: 'LocalLLM',
         integrations: 'Integrations',
         custom: 'Custom',
       };
@@ -468,6 +477,7 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
           />
         )}
         {activePanel === 'AI' && <AIPanel />}
+        {activePanel === 'LocalLLM' && <LocalLLMPanel />}
         {activePanel === 'Integrations' && <IntegrationsPanel />}
         {activePanel === 'Custom' && (
           <MiscPanel

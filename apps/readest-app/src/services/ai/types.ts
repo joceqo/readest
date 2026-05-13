@@ -1,6 +1,6 @@
 import type { LanguageModel, EmbeddingModel } from 'ai';
 
-export type AIProviderName = 'ollama' | 'ai-gateway';
+export type AIProviderName = 'ollama' | 'lmstudio' | 'ai-gateway';
 
 export interface AIProvider {
   id: AIProviderName;
@@ -21,6 +21,10 @@ export interface AISettings {
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaEmbeddingModel: string;
+
+  lmstudioBaseUrl: string;
+  lmstudioModel: string;
+  lmstudioEmbeddingModel: string;
 
   aiGatewayApiKey?: string;
   aiGatewayModel?: string;

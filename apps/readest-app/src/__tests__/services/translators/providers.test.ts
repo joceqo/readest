@@ -54,6 +54,23 @@ vi.mock('@/utils/supabase', () => ({
   },
 }));
 
+// Stub the settings store so the ollama translator can read its baseUrl/model
+// without a real zustand store. Tests override the returned state when they
+// need different values.
+const mockSettingsState = {
+  settings: {
+    aiSettings: {
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaModel: 'llama3.2',
+    },
+  },
+};
+vi.mock('@/store/settingsStore', () => ({
+  useSettingsStore: {
+    getState: () => mockSettingsState,
+  },
+}));
+
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
@@ -326,6 +343,119 @@ describe('azureProvider', () => {
     const { azureProvider } = await import('@/services/translators/providers/azure');
     expect(azureProvider.name).toBe('azure');
     expect(azureProvider.label).toBe('Azure Translator');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ollama (Local LLM) Translator Provider
+// ---------------------------------------------------------------------------
+describe('ollamaProvider', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockSettingsState.settings.aiSettings.ollamaBaseUrl = 'http://127.0.0.1:11434';
+    mockSettingsState.settings.aiSettings.ollamaModel = 'llama3.2';
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const mockOk = (content: string) => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content } }],
+      }),
+    });
+  };
+
+  it('returns empty array for empty input', async () => {
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    const result = await ollamaProvider.translate([], 'en', 'fr');
+    expect(result).toEqual([]);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('translates text via OpenAI-compatible chat completions', async () => {
+    mockOk('Bonjour');
+
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    const result = await ollamaProvider.translate(['Hello'], 'en', 'fr');
+    expect(result).toEqual(['Bonjour']);
+
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
+    expect(opts.method).toBe('POST');
+    expect(opts.headers['Content-Type']).toBe('application/json');
+
+    const body = JSON.parse(opts.body);
+    expect(body.model).toBe('llama3.2');
+    expect(body.stream).toBe(false);
+    expect(Array.isArray(body.messages)).toBe(true);
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[1].role).toBe('user');
+    expect(body.messages[1].content).toBe('Hello');
+  });
+
+  it('preserves empty strings without hitting the network', async () => {
+    mockOk('translated');
+
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    const result = await ollamaProvider.translate(['', 'Hello'], 'en', 'fr');
+    expect(result[0]).toBe('');
+    expect(result[1]).toBe('translated');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws on non-OK response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'server error',
+    });
+
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    await expect(ollamaProvider.translate(['Hello'], 'en', 'fr')).rejects.toThrow(
+      'Translation failed with status 500',
+    );
+  });
+
+  it('uses the configured base URL and model from settings', async () => {
+    mockSettingsState.settings.aiSettings.ollamaBaseUrl = 'http://lmstudio.local:1234';
+    mockSettingsState.settings.aiSettings.ollamaModel = 'qwen2.5:7b';
+    mockOk('Hallo');
+
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    await ollamaProvider.translate(['Hello'], 'en', 'de');
+
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe('http://lmstudio.local:1234/v1/chat/completions');
+    expect(JSON.parse(opts.body).model).toBe('qwen2.5:7b');
+  });
+
+  it('falls back to original text when response shape is unexpected', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ unexpected: true }),
+    });
+
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    const result = await ollamaProvider.translate(['Hello'], 'en', 'fr');
+    expect(result).toEqual(['Hello']);
+  });
+
+  it('strips wrapping quotes from model output', async () => {
+    mockOk('"Bonjour"');
+
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    const result = await ollamaProvider.translate(['Hello'], 'en', 'fr');
+    expect(result).toEqual(['Bonjour']);
+  });
+
+  it('has correct provider metadata', async () => {
+    const { ollamaProvider } = await import('@/services/translators/providers/ollama');
+    expect(ollamaProvider.name).toBe('ollama');
+    expect(ollamaProvider.label).toBe('Local LLM');
   });
 });
 

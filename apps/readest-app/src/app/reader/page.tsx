@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useAppUrlIngress } from '@/hooks/useAppUrlIngress';
+import { useOpenSettingsMenu } from '@/hooks/useOpenSettingsMenu';
+import { useTranslationCachePersistence } from '@/hooks/useTranslationCachePersistence';
 import { useOpenWithBooks } from '@/hooks/useOpenWithBooks';
 import { useOpenAnnotationLink } from '@/hooks/useOpenAnnotationLink';
 import { useOpenShareLink } from '@/hooks/useOpenShareLink';
@@ -19,6 +21,8 @@ export default function Page() {
   const { settings } = useSettingsStore();
 
   useAppUrlIngress();
+  useOpenSettingsMenu();
+  useTranslationCachePersistence();
   useOpenWithBooks();
   useOpenAnnotationLink();
   useOpenShareLink();

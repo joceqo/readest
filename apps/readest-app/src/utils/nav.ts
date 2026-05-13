@@ -5,12 +5,30 @@ import { isPWA, isTauriAppPlatform, isWebAppPlatform } from '@/services/environm
 import { BOOK_IDS_SEPARATOR } from '@/services/constants';
 import { AppService } from '@/types/system';
 
-let readerWindowsCount = 0;
-const createReaderWindow = (appService: AppService, url: string) => {
+// Derive the next free label by scanning the live webview list. The previous
+// implementation cached the count in a module-level variable, but Next.js
+// Fast Refresh resets module state on every edit while the Tauri-side
+// webviews persist — producing the "label `reader-0` already exists" error
+// when a book is opened after a hot reload.
+const nextFreeLabel = async (prefix: string): Promise<string> => {
+  const existing = await WebviewWindow.getAll();
+  const taken = new Set(existing.map((w) => w.label));
+  for (let i = 0; i < 1024; i++) {
+    const candidate = `${prefix}-${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  // Fall back to a timestamp so we never hard-fail; only triggers if a user
+  // somehow has > 1024 simultaneous reader windows, which is well past the
+  // OS window-limit territory.
+  return `${prefix}-${Date.now()}`;
+};
+
+const createReaderWindow = async (appService: AppService, url: string) => {
   const currentWindow = getCurrentWindow();
   const label = currentWindow.label;
   const newLabelPrefix = label === 'main' ? 'reader' : label;
-  const win = new WebviewWindow(`${newLabelPrefix}-${readerWindowsCount}`, {
+  const newLabel = await nextFreeLabel(newLabelPrefix);
+  const win = new WebviewWindow(newLabel, {
     url,
     width: 800,
     height: 600,
@@ -27,14 +45,10 @@ const createReaderWindow = (appService: AppService, url: string) => {
       : 'default') as unknown as ScrollBarStyle,
   });
   win.once('tauri://created', () => {
-    console.log('new window created');
-    readerWindowsCount += 1;
+    console.log('new window created', newLabel);
   });
   win.once('tauri://error', (e) => {
     console.error('error creating window', e);
-  });
-  win.once('tauri://destroyed', () => {
-    readerWindowsCount -= 1;
   });
 };
 

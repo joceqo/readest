@@ -299,10 +299,20 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     const vs = getViewSettings(bookKey);
     const ttsReadAloudText = vs?.ttsReadAloudText;
     if (vs?.translationEnabled && ttsReadAloudText === 'translated') {
-      return vs?.translateTargetLang || getLocale();
+      const lang = vs?.translateTargetLang || getLocale();
+      console.warn('[TTS-lang] translated only →', lang);
+      return lang;
     } else if (vs?.translationEnabled && ttsReadAloudText === 'source') {
-      return bookData?.book?.primaryLanguage || '';
+      const lang = bookData?.book?.primaryLanguage || '';
+      console.warn('[TTS-lang] source only →', lang);
+      return lang;
     }
+    console.warn(
+      '[TTS-lang] no filter (reads both): translationEnabled=',
+      vs?.translationEnabled,
+      'ttsReadAloudText=',
+      ttsReadAloudText,
+    );
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [

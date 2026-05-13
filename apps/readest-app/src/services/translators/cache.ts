@@ -4,7 +4,7 @@ const DB_NAME = 'TranslationCache';
 const DB_VERSION = 1;
 const STORE_NAME = 'translations';
 
-interface CacheEntry {
+export interface CacheEntry {
   key: string;
   translation: string;
   timestamp: number;
@@ -520,6 +520,69 @@ export const pruneCache = async (
     });
   } catch (error) {
     console.error('Error pruning cache:', error);
+    return 0;
+  }
+};
+
+/**
+ * Returns every entry currently in IndexedDB. Used by the Tauri-side
+ * snapshot to persist the cache to a JSON sidecar file so translations
+ * survive an IndexedDB wipe (browser-data clear, app reinstall, webview
+ * state reset).
+ */
+export const getAllCacheEntries = async (): Promise<CacheEntry[]> => {
+  try {
+    const db = await openDatabase();
+    return await new Promise<CacheEntry[]>((resolve) => {
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      request.onsuccess = () => resolve((request.result as CacheEntry[]) ?? []);
+      request.onerror = () => resolve([]);
+      transaction.oncomplete = () => db.close();
+    });
+  } catch (error) {
+    console.error('Error reading all cache entries:', error);
+    return [];
+  }
+};
+
+/**
+ * Bulk-imports entries that aren't already present. Used at boot to
+ * restore from the Tauri JSON sidecar without overwriting newer entries
+ * that IndexedDB already has.
+ */
+export const importCacheEntries = async (entries: CacheEntry[]): Promise<number> => {
+  if (!entries.length) return 0;
+  try {
+    const db = await openDatabase();
+    return await new Promise<number>((resolve) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      let imported = 0;
+      let processed = 0;
+      const done = () => {
+        if (++processed === entries.length) resolve(imported);
+      };
+      for (const entry of entries) {
+        const get = store.get(entry.key);
+        get.onsuccess = () => {
+          const existing = get.result as CacheEntry | undefined;
+          if (!existing) {
+            store.put(entry);
+            memoryCache[entry.key] = entry.translation;
+            memoryTimestamps[entry.key] = entry.timestamp;
+            imported++;
+          }
+          done();
+        };
+        get.onerror = () => done();
+      }
+      transaction.oncomplete = () => db.close();
+      transaction.onerror = () => resolve(imported);
+    });
+  } catch (error) {
+    console.error('Error importing cache entries:', error);
     return 0;
   }
 };

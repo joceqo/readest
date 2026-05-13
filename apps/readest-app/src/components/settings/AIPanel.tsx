@@ -75,6 +75,13 @@ const AIPanel: React.FC = () => {
   const [ollamaEmbeddingModel, setOllamaEmbeddingModel] = useState(aiSettings.ollamaEmbeddingModel);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [lmstudioUrl, setLmstudioUrl] = useState(aiSettings.lmstudioBaseUrl);
+  const [lmstudioModel, setLmstudioModel] = useState(aiSettings.lmstudioModel);
+  const [lmstudioEmbeddingModel, setLmstudioEmbeddingModel] = useState(
+    aiSettings.lmstudioEmbeddingModel,
+  );
+  const [lmstudioModels, setLmstudioModels] = useState<string[]>([]);
+  const [fetchingLmstudioModels, setFetchingLmstudioModels] = useState(false);
   const [gatewayKey, setGatewayKey] = useState(aiSettings.aiGatewayApiKey ?? '');
 
   const savedCustomModel = aiSettings.aiGatewayCustomModel ?? '';
@@ -147,6 +154,34 @@ const AIPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, enabled, ollamaUrl]);
 
+  const fetchLmstudioModels = useCallback(async () => {
+    if (!lmstudioUrl || !enabled) return;
+    setFetchingLmstudioModels(true);
+    try {
+      // LM Studio exposes the OpenAI-standard `/v1/models` listing. The
+      // shape is `{ data: [{ id: '...', ... }, ...] }`.
+      const response = await fetch(`${lmstudioUrl.replace(/\/+$/, '')}/v1/models`);
+      if (!response.ok) throw new Error('Failed to fetch models');
+      const data = await response.json();
+      const models: string[] = (data?.data ?? []).map((m: { id: string }) => m.id).filter(Boolean);
+      setLmstudioModels(models);
+      if (models.length > 0 && !models.includes(lmstudioModel)) {
+        setLmstudioModel(models[0]!);
+      }
+    } catch (_err) {
+      setLmstudioModels([]);
+    } finally {
+      setFetchingLmstudioModels(false);
+    }
+  }, [lmstudioUrl, lmstudioModel, enabled]);
+
+  useEffect(() => {
+    if (provider === 'lmstudio' && enabled) {
+      fetchLmstudioModels();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider, enabled, lmstudioUrl]);
+
   useEffect(() => {
     isMounted.current = true;
   }, []);
@@ -190,6 +225,30 @@ const AIPanel: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ollamaEmbeddingModel]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (lmstudioUrl !== aiSettings.lmstudioBaseUrl) {
+      saveAiSetting('lmstudioBaseUrl', lmstudioUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lmstudioUrl]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (lmstudioModel !== aiSettings.lmstudioModel) {
+      saveAiSetting('lmstudioModel', lmstudioModel);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lmstudioModel]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (lmstudioEmbeddingModel !== aiSettings.lmstudioEmbeddingModel) {
+      saveAiSetting('lmstudioEmbeddingModel', lmstudioEmbeddingModel);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lmstudioEmbeddingModel]);
 
   useEffect(() => {
     if (!isMounted.current) return;
@@ -287,6 +346,9 @@ const AIPanel: React.FC = () => {
         ollamaBaseUrl: ollamaUrl,
         ollamaModel,
         ollamaEmbeddingModel,
+        lmstudioBaseUrl: lmstudioUrl,
+        lmstudioModel,
+        lmstudioEmbeddingModel,
         aiGatewayApiKey: gatewayKey,
         aiGatewayModel: effectiveModel,
       };
@@ -299,7 +361,9 @@ const AIPanel: React.FC = () => {
         setErrorMessage(
           provider === 'ollama'
             ? _("Couldn't connect to Ollama. Is it running?")
-            : _('Invalid API key or connection failed'),
+            : provider === 'lmstudio'
+              ? _("Couldn't reach LM Studio. Start its Local Server tab and load a model.")
+              : _('Invalid API key or connection failed'),
         );
       }
     } catch (error) {
@@ -328,6 +392,16 @@ const AIPanel: React.FC = () => {
             className='radio'
             checked={provider === 'ollama'}
             onChange={() => setProvider('ollama')}
+            disabled={!enabled}
+          />
+        </SettingsRow>
+        <SettingsRow label={_('LM Studio (Local)')} asLabel>
+          <input
+            type='radio'
+            name='ai-provider'
+            className='radio'
+            checked={provider === 'lmstudio'}
+            onChange={() => setProvider('lmstudio')}
             disabled={!enabled}
           />
         </SettingsRow>
@@ -407,6 +481,76 @@ const AIPanel: React.FC = () => {
           ) : !fetchingModels ? (
             <SettingsRow
               label={<span className='text-warning text-sm'>{_('No models detected')}</span>}
+            />
+          ) : null}
+        </BoxedList>
+      )}
+
+      {provider === 'lmstudio' && (
+        <BoxedList title={_('LM Studio Configuration')} className={disabledSection}>
+          <div className='flex flex-col gap-2 py-3 pe-4'>
+            <div className='flex w-full items-center justify-between'>
+              <SettingLabel>{_('Server URL')}</SettingLabel>
+              <button
+                className='hover:bg-base-200 inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150'
+                onClick={fetchLmstudioModels}
+                disabled={!enabled || fetchingLmstudioModels}
+                title={_('Refresh Models')}
+                aria-label={_('Refresh Models')}
+              >
+                <PiArrowsClockwise className='size-4' />
+              </button>
+            </div>
+            <input
+              type='text'
+              className='input input-bordered input-sm w-full'
+              value={lmstudioUrl}
+              onChange={(e) => setLmstudioUrl(e.target.value)}
+              placeholder='http://127.0.0.1:1234'
+              disabled={!enabled}
+            />
+          </div>
+          {lmstudioModels.length > 0 ? (
+            <>
+              <div className='flex flex-col gap-2 py-3 pe-4'>
+                <SettingLabel>{_('AI Model')}</SettingLabel>
+                <select
+                  className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                  value={lmstudioModel}
+                  onChange={(e) => setLmstudioModel(e.target.value)}
+                  disabled={!enabled}
+                >
+                  {lmstudioModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className='flex flex-col gap-2 py-3 pe-4'>
+                <SettingLabel>{_('Embedding Model (optional)')}</SettingLabel>
+                <select
+                  className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                  value={lmstudioEmbeddingModel}
+                  onChange={(e) => setLmstudioEmbeddingModel(e.target.value)}
+                  disabled={!enabled}
+                >
+                  <option value=''>—</option>
+                  {lmstudioModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : !fetchingLmstudioModels ? (
+            <SettingsRow
+              label={
+                <span className='text-warning text-sm'>
+                  {_('No models detected — start the Local Server in LM Studio')}
+                </span>
+              }
             />
           ) : null}
         </BoxedList>

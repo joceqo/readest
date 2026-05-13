@@ -24,6 +24,12 @@ export function useTextTranslation(
   const [provider, setProvider] = useState(viewSettings?.translationProvider);
   const [targetLang, setTargetLang] = useState(viewSettings?.translateTargetLang);
   const showTranslateSourceRef = useRef(viewSettings?.showTranslateSource);
+  // Tracks whether TTS is reading the translated text. When true, the current
+  // section is translated eagerly (every paragraph, not just visible ones) so
+  // the SSML extracted by foliate-js's TTS contains the French text instead of
+  // the source. The prefetch of prev/next sections runs regardless — it only
+  // warms the translation cache and is cheap once entries are cached.
+  const ttsReadTranslatedRef = useRef(viewSettings?.ttsReadAloudText === 'translated');
 
   const { translate } = useTranslator({
     provider,
@@ -40,6 +46,15 @@ export function useTextTranslation(
   const pendingDOMUpdates = useRef<Array<() => void>>([]);
   const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cache-warming for adjacent sections: keyed by section index. Each entry
+  // resolves once the section's text has been pushed through translateRef
+  // (which calls storeInCache). When the user navigates to that section, the
+  // intersection observer fires translateElement, hits the cache, and inserts
+  // the translated DOM nearly instantly.
+  const prefetchedSections = useRef<Set<number>>(new Set());
+  const prefetchPending = useRef<number[]>([]);
+  const prefetchInFlight = useRef(0);
+  const MAX_CONCURRENT_PREFETCH = 1;
 
   const toggleTranslationVisibility = (visible: boolean) => {
     translatedElements.current.forEach((element) => {
@@ -83,6 +98,83 @@ export function useTextTranslation(
     );
     allTextNodes.current = nodes;
     nodes.forEach((el) => observer.observe(el));
+
+    // When TTS is reading the translated text, the SSML foliate-js extracts on
+    // section init must already contain the French DOM siblings — otherwise it
+    // reads English. Bypass the intersection observer and translate every
+    // paragraph in the current section right away.
+    if (ttsReadTranslatedRef.current) {
+      nodes.forEach((el) => scheduleTranslation(el));
+    }
+  };
+
+  // Walk an off-screen Document (returned by SectionItem.createDocument) the
+  // same way walkTextNodes does, and push each text into translateRef. The
+  // translate helper writes results into the shared translation cache, so
+  // when the user actually navigates to the section the intersection observer
+  // gets cache hits and renders translations without a network round-trip.
+  const prefetchSection = async (idx: number) => {
+    if (prefetchedSections.current.has(idx)) return;
+    prefetchedSections.current.add(idx);
+    if (!view || !('renderer' in view)) return;
+    const fv = view as FoliateView;
+    const section = fv.book?.sections?.[idx];
+    if (!section?.createDocument) return;
+    try {
+      const doc = await section.createDocument();
+      if (!doc?.body) return;
+      const els = walkTextNodes(doc.body, ['pre', 'code', 'math']);
+      const texts: string[] = [];
+      for (const el of els) {
+        const t = el.textContent?.replaceAll('\n', '').trim();
+        if (t) texts.push(t);
+      }
+      if (!texts.length) return;
+      const CHUNK = 5;
+      for (let i = 0; i < texts.length; i += CHUNK) {
+        if (!enabled.current) return;
+        try {
+          await translateRef.current(texts.slice(i, i + CHUNK));
+        } catch {
+          // Best-effort — one failed chunk shouldn't kill the rest of the
+          // prefetch pass, and the live observer can still retry later.
+        }
+      }
+    } catch {
+      // createDocument may legitimately fail (e.g. broken EPUB section); drop
+      // the marker so the next 'load' event can retry.
+      prefetchedSections.current.delete(idx);
+    }
+  };
+
+  const drainPrefetchQueue = () => {
+    while (
+      prefetchInFlight.current < MAX_CONCURRENT_PREFETCH &&
+      prefetchPending.current.length > 0
+    ) {
+      const idx = prefetchPending.current.shift()!;
+      prefetchInFlight.current++;
+      prefetchSection(idx).finally(() => {
+        prefetchInFlight.current--;
+        drainPrefetchQueue();
+      });
+    }
+  };
+
+  const schedulePrefetchAroundCurrent = () => {
+    if (!view || !enabled.current) return;
+    if (!('renderer' in view)) return;
+    const fv = view as FoliateView;
+    const curr = fv.renderer?.primaryIndex;
+    const total = fv.book?.sections?.length ?? 0;
+    if (typeof curr !== 'number' || total === 0) return;
+    for (const idx of [curr - 1, curr + 1]) {
+      if (idx < 0 || idx >= total) continue;
+      if (prefetchedSections.current.has(idx)) continue;
+      if (prefetchPending.current.includes(idx)) continue;
+      prefetchPending.current.push(idx);
+    }
+    drainPrefetchQueue();
   };
 
   const updateTranslation = () => {
@@ -369,13 +461,29 @@ export function useTextTranslation(
       showTranslateSourceRef.current = viewSettings.showTranslateSource;
     }
 
+    // Keep the eager-translate gate in sync with the live setting so toggling
+    // "Read Aloud Text → Translated" at runtime takes effect on the next
+    // section load (and on the current one via the catch-up below).
+    const nextTtsReadTranslated = viewSettings.ttsReadAloudText === 'translated';
+    const ttsModeChanged = ttsReadTranslatedRef.current !== nextTtsReadTranslated;
+    ttsReadTranslatedRef.current = nextTtsReadTranslated;
+
     if (enabledChanged) {
       toggleTranslationVisibility(viewSettings.translationEnabled);
       if (enabled.current) {
         observeTextNodes();
+        schedulePrefetchAroundCurrent();
       }
     } else if (providerChanged || targetLangChanged || showTranslateSourceChanged) {
       updateTranslation();
+      // Provider/target changes invalidate previous cache entries (different
+      // cache key), so re-prefetch the adjacent sections.
+      prefetchedSections.current.clear();
+      schedulePrefetchAroundCurrent();
+    } else if (ttsModeChanged && nextTtsReadTranslated && enabled.current) {
+      // Catch up: user just flipped to translated TTS mid-section. Force the
+      // current section's untranslated paragraphs through the queue.
+      allTextNodes.current.forEach((el) => scheduleTranslation(el));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookKey, viewSettings, provider, targetLang]);
@@ -386,6 +494,10 @@ export function useTextTranslation(
     if ('renderer' in view) {
       view.addEventListener('load', observeTextNodes);
       view.addEventListener('load', hintInitialTranslating);
+      view.addEventListener('load', schedulePrefetchAroundCurrent);
+      // Prime the prefetch for the very first chapter the reader opens to —
+      // 'load' has already fired by the time this effect attaches.
+      schedulePrefetchAroundCurrent();
     } else {
       observeTextNodes();
     }
@@ -393,6 +505,7 @@ export function useTextTranslation(
       if ('renderer' in view) {
         view.removeEventListener('load', observeTextNodes);
         view.removeEventListener('load', hintInitialTranslating);
+        view.removeEventListener('load', schedulePrefetchAroundCurrent);
       }
       observerRef.current?.disconnect();
       translatedElements.current = [];
@@ -407,6 +520,9 @@ export function useTextTranslation(
         hintTimerRef.current = null;
       }
       pendingDOMUpdates.current = [];
+      prefetchedSections.current.clear();
+      prefetchPending.current = [];
+      prefetchInFlight.current = 0;
       setIsLoading(bookKey, false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

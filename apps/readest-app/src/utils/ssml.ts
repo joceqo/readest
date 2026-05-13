@@ -183,8 +183,120 @@ export const filterSSMLWithLang = (
       return ssml;
     }
 
-    const combinedContent = langBlocks.map((block) => block.match).join('');
-    return `${speakOpenMatch[0]}${combinedContent}${speakCloseMatch[0]}`;
+    // Walk the SSML linearly so that `<mark>` tags that live OUTSIDE the
+    // `<lang>` blocks survive — Readest's generator emits structure like
+    // `<mark name="0"/>Source text<lang xml:lang="fr">Translation</lang>`,
+    // where the mark tags the start of the segment for both source and
+    // translation. Rebuilding from just the matching lang blocks (the
+    // previous behaviour) dropped every such mark, so parseSSMLMarks
+    // returned 0 entries and TTSController fast-forwarded past the chunk.
+    //
+    // Rule:
+    //   - keep every `<mark .../>` (positions stay stable across langs)
+    //   - keep matching `<lang xml:lang="target">…</lang>` blocks intact
+    //   - drop non-matching lang blocks and their inner content
+    //   - drop loose text outside any lang block (that's the untranslated
+    //     source text we don't want the TTS to read)
+    const tokenRegex = /<mark\s[^>]*\/>|<lang\s+xml:lang="([^"]+)"[^>]*>(?:.|\n)*?<\/lang>/g;
+    const innerMarkRegex = /<mark\s+name="([^"]+)"\s*\/>/;
+    // Match the opening `<lang …>` tag in a kept block, optionally followed
+    // by whitespace, optionally followed by a `<mark .../>`. Used to detect
+    // matching-lang blocks whose content STARTS with raw text rather than
+    // a mark — those would lose their first sentence in parseSSMLMarks
+    // because no activeMark is set when the text is encountered.
+    const langOpenWithMarkRegex = /^(<lang\s+xml:lang="[^"]+"[^>]*>)\s*<mark\s/;
+    const kept: string[] = [];
+    let keptHasLang = false;
+    // Track the most recent source-side mark name as we walk the SSML.
+    // When we then keep a matching `<lang>` block whose first content is
+    // raw text (no inner `<mark>`), we promote this name into the block
+    // so that the first translated sentence isn't silently dropped by
+    // parseSSMLMarks. The same name is also used as the top-level
+    // synthetic when no matching-block mark was already present.
+    let lastSourceMarkName: string | null = null;
+    let tokenMatch: RegExpExecArray | null;
+    while ((tokenMatch = tokenRegex.exec(ssml)) !== null) {
+      const token = tokenMatch[0]!;
+      if (token.startsWith('<mark')) {
+        kept.push(token);
+        const m = token.match(innerMarkRegex);
+        if (m && m[1] && m[1] !== '-1') lastSourceMarkName = m[1];
+        continue;
+      }
+      const blockLang =
+        code6392to6391(tokenMatch[1]!.toLowerCase()) || tokenMatch[1]!.toLowerCase();
+      if (isSameLang(blockLang, normalizedTarget)) {
+        // If the matching block doesn't open with a `<mark>`, parseSSMLMarks
+        // will encounter the first sentence's text before any activeMark
+        // is set inside the block and silently drop it. Inject one here
+        // using the most recent source-side mark name so the text is
+        // attached to a valid mark name in foliate-js's #ranges.
+        let toPush = token;
+        if (!langOpenWithMarkRegex.test(token) && lastSourceMarkName) {
+          toPush = token.replace(
+            /^(<lang\s+xml:lang="[^"]+"[^>]*>)/,
+            `$1<mark name="${lastSourceMarkName}"/>`,
+          );
+        }
+        kept.push(toPush);
+        keptHasLang = true;
+      } else if (!lastSourceMarkName) {
+        // Capture from inside the non-matching block too, so paragraphs
+        // whose only marks live inside the source-language `<lang>` still
+        // get a usable name.
+        const inner = token.match(innerMarkRegex);
+        if (inner && inner[1] && inner[1] !== '-1') {
+          lastSourceMarkName = inner[1];
+        }
+      } else {
+        // Non-matching block: update lastSourceMarkName from its LAST
+        // inner mark so the next matching block (if any) inherits a name
+        // closer to its position in document order.
+        const allInner = [...token.matchAll(/<mark\s+name="([^"]+)"\s*\/>/g)];
+        const lastInner = allInner[allInner.length - 1];
+        if (lastInner && lastInner[1] && lastInner[1] !== '-1') {
+          lastSourceMarkName = lastInner[1];
+        }
+      }
+    }
+    const firstDroppedMarkName = lastSourceMarkName;
+
+    // Ensure every kept `<lang>` block has a `<mark>` BEFORE its first
+    // text content. Without that, parseSSMLMarks walks past the opening
+    // tag, encounters text with no active mark, and silently drops it —
+    // which is why the first sentence of a translated paragraph used to
+    // be skipped entirely (no mark → no dispatch → no audio, no
+    // highlight). We rewrite each kept lang block so a synthetic mark is
+    // injected right after the opening tag if the next thing inside is
+    // text. The recycled source-side mark name (when available) ties the
+    // synthetic mark back to a real foliate-js Range so the highlight
+    // remap still works; otherwise we fall back to "-1" — the audio
+    // still plays, just without a per-sentence highlight on that first
+    // segment.
+    const langOpenRegex = /^(<lang\s+xml:lang="[^"]+"[^>]*>)([\s\S]*)<\/lang>$/;
+    const syntheticName = firstDroppedMarkName ?? '-1';
+    const rewritten = kept.map((token) => {
+      if (!token.startsWith('<lang')) return token;
+      const match = token.match(langOpenRegex);
+      if (!match) return token;
+      const [, open, body] = match;
+      // If the body already starts with a <mark>, no injection needed —
+      // parseSSMLMarks will pick it up.
+      if (/^\s*<mark\s/.test(body!)) return token;
+      return `${open}<mark name="${syntheticName}"/>${body}</lang>`;
+    });
+
+    // If despite the per-lang-block injection above we still don't have
+    // any mark at all (e.g. an edge case where the lang regex didn't
+    // match), fall back to the old top-level synthetic mark so the chunk
+    // isn't skipped entirely. The `<mark>` literal anywhere inside the
+    // kept tokens — including nested inside lang blocks — counts.
+    const keptHasMark = rewritten.some((t) => /<mark\s/.test(t));
+    if (keptHasLang && !keptHasMark) {
+      rewritten.unshift(`<mark name="${syntheticName}"/>`);
+    }
+
+    return `${speakOpenMatch[0]}${rewritten.join('')}${speakCloseMatch[0]}`;
   }
 
   return ssml;

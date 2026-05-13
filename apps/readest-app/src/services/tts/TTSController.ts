@@ -1,12 +1,14 @@
 import { FoliateView } from '@/types/view';
 import { AppService } from '@/types/system';
 import { filterSSMLWithLang, parseSSMLMarks } from '@/utils/ssml';
+import { findTranslatedRange } from '@/utils/translationDom';
 import { Overlayer } from 'foliate-js/overlayer.js';
 import { TTSGranularity, TTSHighlightOptions, TTSMark, TTSVoice } from './types';
 import { createRejectFilter } from '@/utils/node';
 import { WebSpeechClient } from './WebSpeechClient';
 import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
+import { KokoroTTSClient } from './KokoroTTSClient';
 import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
 import { isValidLang } from '@/utils/lang';
@@ -41,9 +43,11 @@ export class TTSController extends EventTarget {
   ttsClient: TTSClient;
   ttsWebClient: TTSClient;
   ttsEdgeClient: TTSClient;
+  ttsKokoroClient: TTSClient;
   ttsNativeClient: TTSClient | null = null;
   ttsWebVoices: TTSVoice[] = [];
   ttsEdgeVoices: TTSVoice[] = [];
+  ttsKokoroVoices: TTSVoice[] = [];
   ttsNativeVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
 
@@ -59,6 +63,7 @@ export class TTSController extends EventTarget {
     super();
     this.ttsWebClient = new WebSpeechClient(this);
     this.ttsEdgeClient = new EdgeTTSClient(this, appService);
+    this.ttsKokoroClient = new KokoroTTSClient(this);
     // TODO: implement native TTS client for iOS and PC
     if (appService?.isAndroidApp) {
       this.ttsNativeClient = new NativeTTSClient(this);
@@ -82,6 +87,10 @@ export class TTSController extends EventTarget {
     }
     if (await this.ttsWebClient.init()) {
       availableClients.push(this.ttsWebClient);
+    }
+    if (await this.ttsKokoroClient.init()) {
+      availableClients.push(this.ttsKokoroClient);
+      this.ttsKokoroVoices = await this.ttsKokoroClient.getAllVoices();
     }
     this.ttsClient = availableClients[0] || this.ttsWebClient;
     const preferredClientName = TTSUtils.getPreferredClient();
@@ -298,7 +307,34 @@ export class TTSController extends EventTarget {
       .replace(/·/g, ' ');
 
     if (this.ttsTargetLang) {
+      const before = ssml.length;
+      const beforeParsed = parseSSMLMarks(ssml);
+      const beforeMarks = beforeParsed.marks.length;
       ssml = filterSSMLWithLang(ssml, this.ttsTargetLang);
+      const afterParsed = parseSSMLMarks(ssml);
+      const afterMarks = afterParsed.marks.length;
+      console.warn(
+        `[TTS-filter] applied ttsTargetLang=${this.ttsTargetLang}, ssml ${before} → ${ssml.length} chars, marks ${beforeMarks} → ${afterMarks}`,
+      );
+      if (afterMarks > 0 && afterMarks <= 5) {
+        // For small chunks, dump every surviving mark + its associated
+        // text so we can see which sentence each is bound to. If the
+        // first translated sentence is missing here, the bug is the
+        // filter or the source SSML structure.
+        console.warn(
+          '[TTS-filter] surviving marks:',
+          afterParsed.marks.map((m) => `[${m.name}] "${m.text.slice(0, 50)}"`).join(' | '),
+        );
+        console.warn('[TTS-filter] filtered SSML head:', ssml.slice(0, 500));
+      }
+      if (afterMarks === 0 && beforeMarks > 0) {
+        console.warn(
+          '[TTS-filter] ALL MARKS DROPPED — chunk will be skipped. Filtered SSML:',
+          ssml.slice(0, 400),
+        );
+      }
+    } else {
+      console.warn('[TTS-filter] no ttsTargetLang set, both langs will be read');
     }
 
     if (this.preprocessCallback) {
@@ -341,8 +377,20 @@ export class TTSController extends EventTarget {
         }
 
         const { plainText, marks } = parseSSMLMarks(ssml);
+        console.warn(
+          '[TTS-speak] starting, marks=',
+          marks.length,
+          'plainTextLen=',
+          plainText.length,
+          'first=',
+          marks[0] ? `[${marks[0].name}] "${marks[0].text.slice(0, 50)}"` : '(none)',
+        );
         if (!oneTime) {
           if (!plainText || marks.length === 0) {
+            console.warn(
+              '[TTS-speak] SKIPPING chunk — no marks or empty plainText. ssml head:',
+              ssml.slice(0, 300),
+            );
             resolve();
             return await this.forward();
           } else {
@@ -490,6 +538,7 @@ export class TTSController extends EventTarget {
   async setPrimaryLang(lang: string) {
     if (this.ttsEdgeClient.initialized) this.ttsEdgeClient.setPrimaryLang(lang);
     if (this.ttsWebClient.initialized) this.ttsWebClient.setPrimaryLang(lang);
+    if (this.ttsKokoroClient.initialized) this.ttsKokoroClient.setPrimaryLang(lang);
     if (this.ttsNativeClient?.initialized) this.ttsNativeClient?.setPrimaryLang(lang);
   }
 
@@ -502,9 +551,15 @@ export class TTSController extends EventTarget {
   async getVoices(lang: string) {
     const ttsWebVoices = await this.ttsWebClient.getVoices(lang);
     const ttsEdgeVoices = await this.ttsEdgeClient.getVoices(lang);
+    const ttsKokoroVoices = await this.ttsKokoroClient.getVoices(lang);
     const ttsNativeVoices = (await this.ttsNativeClient?.getVoices(lang)) ?? [];
 
-    const voicesGroups = [...ttsNativeVoices, ...ttsEdgeVoices, ...ttsWebVoices];
+    const voicesGroups = [
+      ...ttsKokoroVoices,
+      ...ttsNativeVoices,
+      ...ttsEdgeVoices,
+      ...ttsWebVoices,
+    ];
     return voicesGroups;
   }
 
@@ -513,10 +568,16 @@ export class TTSController extends EventTarget {
     const useEdgeTTS = !!this.ttsEdgeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
+    const useKokoroTTS = !!this.ttsKokoroVoices.find(
+      (voice) => voice.id === voiceId && !voice.disabled,
+    );
     const useNativeTTS = !!this.ttsNativeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
-    if (useEdgeTTS) {
+    if (useKokoroTTS) {
+      this.ttsClient = this.ttsKokoroClient;
+      await this.ttsClient.setRate(this.ttsRate);
+    } else if (useEdgeTTS) {
       this.ttsClient = this.ttsEdgeClient;
       await this.ttsClient.setRate(this.ttsRate);
     } else if (useNativeTTS) {
@@ -550,8 +611,19 @@ export class TTSController extends EventTarget {
     this.dispatchEvent(new CustomEvent('tts-speak-mark', { detail: mark || { text: '' } }));
     if (mark && mark.name !== '-1') {
       try {
-        const range = this.view.tts?.setMark(mark.name);
-        const cfi = this.view.getCFI(this.#ttsSectionIndex, range);
+        // foliate-js's setMark invokes our #getHighlighter callback
+        // internally — and that callback now remaps to the translated
+        // sibling when ttsTargetLang is set, so the visual highlight
+        // already lands on the right text after this call. We just need
+        // to compute the CFI for the (effective) range and dispatch the
+        // event so other consumers (scroll-to-anchor in useTTSControl)
+        // can react.
+        const sourceRange = this.view.tts?.setMark(mark.name);
+        const effectiveRange =
+          this.ttsTargetLang && sourceRange
+            ? (findTranslatedRange(sourceRange) ?? sourceRange)
+            : sourceRange;
+        const cfi = this.view.getCFI(this.#ttsSectionIndex, effectiveRange);
         this.dispatchEvent(new CustomEvent('tts-highlight-mark', { detail: { cfi } }));
       } catch {}
     }

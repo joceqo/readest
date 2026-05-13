@@ -146,4 +146,85 @@ describe('filterSSMLWithLang', () => {
     expect(result).toContain('Bonjour');
     expect(result).toContain('Au revoir');
   });
+
+  // Regression: Readest's translation observer emits marks OUTSIDE the
+  // `<lang>` block. Earlier behaviour rebuilt the filtered SSML from only
+  // matching lang blocks, dropping every such mark — parseSSMLMarks then
+  // saw 0 marks and the TTS controller skipped the chunk entirely.
+  it('preserves marks that live outside the target lang block', () => {
+    const ssml = ssmlWithLang(
+      'en',
+      '<mark name="0"/>Acknowledgments<lang xml:lang="fr">Remerciements</lang>',
+    );
+    const result = filterSSMLWithLang(ssml, 'fr');
+    expect(result).toContain('<mark name="0"');
+    expect(result).toContain('Remerciements');
+    expect(result).not.toContain('Acknowledgments');
+  });
+
+  // Regression: when source-language `<lang>` blocks contain all the marks
+  // and the matching target block has none, the filter must inject a
+  // synthetic mark so TTSController doesn't fast-forward past the chunk.
+  it('injects a synthetic mark when matching block has none', () => {
+    const ssml = ssmlWithLang(
+      'en',
+      '<lang xml:lang="en"><mark name="0"/>Acknowledgments</lang><lang xml:lang="fr">Remerciements</lang>',
+    );
+    const result = filterSSMLWithLang(ssml, 'fr');
+    expect(result).toContain('Remerciements');
+    expect(result).not.toContain('Acknowledgments');
+    // Must have at least one <mark> so parseSSMLMarks returns a non-empty
+    // array and the chunk is actually spoken.
+    expect(result).toMatch(/<mark\s+name="[^"]*"/);
+  });
+
+  // Regression: the synthetic mark must reuse the source-side mark name
+  // (when available) so that foliate-js's setMark resolves it to a real
+  // Range — that's what makes the highlight pipeline run on the
+  // translated paragraph. Falling back to "-1" silently disables the
+  // highlight (TTSController gates on `mark.name !== '-1'`).
+  it('recycles the source-side mark name instead of "-1" when injecting', () => {
+    const ssml = ssmlWithLang(
+      'en',
+      '<lang xml:lang="en"><mark name="42"/>Acknowledgments</lang><lang xml:lang="fr">Remerciements</lang>',
+    );
+    const result = filterSSMLWithLang(ssml, 'fr');
+    expect(result).toContain('<mark name="42"');
+    expect(result).not.toContain('<mark name="-1"');
+  });
+
+  // Regression: when a <lang> block starts with text (no leading inner
+  // <mark>), parseSSMLMarks would silently drop that first text segment
+  // — the user's symptom was "first French sentence is never read /
+  // highlighted". The filter must inject a leading <mark> inside each
+  // kept lang block so the first text gets attributed.
+  it('injects a leading mark inside a kept lang block that starts with text', () => {
+    const ssml = ssmlWithLang(
+      'en',
+      '<mark name="0"/><mark name="1"/><mark name="2"/><lang xml:lang="fr">First French sentence.<mark name="3"/>Second French sentence.</lang>',
+    );
+    const result = filterSSMLWithLang(ssml, 'fr');
+    // The lang block must now start with a <mark> so parseSSMLMarks
+    // picks up "First French sentence.".
+    expect(result).toMatch(/<lang\s+xml:lang="fr">\s*<mark\s+name="[^"]+"\s*\/>/);
+    // The original inner mark "3" should still be in place for the
+    // second sentence.
+    expect(result).toContain('<mark name="3"');
+  });
+
+  // Companion to the above: when the lang block already has an inner
+  // leading mark, we should NOT inject another one (that would attach
+  // the first sentence to a wrong mark name).
+  it('does not double-up the mark when the lang block already has a leading mark', () => {
+    const ssml = ssmlWithLang(
+      'en',
+      '<mark name="0"/><lang xml:lang="fr"><mark name="1"/>French text.</lang>',
+    );
+    const result = filterSSMLWithLang(ssml, 'fr');
+    // Exactly one <mark> inside the lang block.
+    const inside = result.match(/<lang\s+xml:lang="fr"[^>]*>([\s\S]*?)<\/lang>/);
+    expect(inside).not.toBeNull();
+    const innerMarks = (inside![1]!.match(/<mark\s/g) || []).length;
+    expect(innerMarks).toBe(1);
+  });
 });

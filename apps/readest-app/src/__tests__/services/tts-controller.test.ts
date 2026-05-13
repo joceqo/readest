@@ -26,6 +26,12 @@ vi.mock('@/services/tts/NativeTTSClient', () => ({
   }),
 }));
 
+vi.mock('@/services/tts/KokoroTTSClient', () => ({
+  KokoroTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, createMockTTSClient('kokoro'));
+  }),
+}));
+
 vi.mock('@/services/tts/TTSUtils', () => ({
   TTSUtils: {
     getPreferredClient: vi.fn().mockReturnValue(null),

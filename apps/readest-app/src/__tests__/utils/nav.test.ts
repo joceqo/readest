@@ -14,8 +14,16 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
   const mockOnce = vi.fn();
   const ctor = vi.fn().mockImplementation(function (this: Record<string, unknown>) {
     this['once'] = mockOnce;
-  }) as unknown as { getByLabel: ReturnType<typeof vi.fn> };
+  }) as unknown as {
+    getByLabel: ReturnType<typeof vi.fn>;
+    getAll: ReturnType<typeof vi.fn>;
+  };
   ctor.getByLabel = vi.fn();
+  // nextFreeLabel() (added when we switched from a module-local counter to a
+  // live-window scan to avoid duplicate `reader-0` labels after Fast Refresh)
+  // calls WebviewWindow.getAll(). Default to no existing windows so label
+  // generation picks `reader-0`/`library-0` for the first call.
+  ctor.getAll = vi.fn().mockResolvedValue([]);
   return { WebviewWindow: ctor };
 });
 
@@ -47,7 +55,10 @@ import {
   closeReaderWindowOrGoToLibrary,
 } from '@/utils/nav';
 
-const WebviewWindowCtor = WebviewWindow as unknown as { getByLabel: ReturnType<typeof vi.fn> };
+const WebviewWindowCtor = WebviewWindow as unknown as {
+  getByLabel: ReturnType<typeof vi.fn>;
+  getAll: ReturnType<typeof vi.fn>;
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function mockRouter() {
@@ -312,22 +323,28 @@ describe('navigateToUpdatePassword', () => {
   });
 });
 
+// createReaderWindow is async (it awaits nextFreeLabel which reads
+// WebviewWindow.getAll); showReaderWindow/showLibraryWindow fire-and-forget.
+// Tests need to let the microtask chain settle before inspecting mock.calls.
+const flushAsync = () => vi.waitFor(() => expect(WebviewWindow).toHaveBeenCalled());
+
 describe('showReaderWindow', () => {
-  test('creates a new WebviewWindow with correct URL', () => {
+  test('creates a new WebviewWindow with correct URL', async () => {
     const appService = makeAppService();
     showReaderWindow(appService as never, ['book1', 'book2']);
 
-    expect(WebviewWindow).toHaveBeenCalled();
+    await flushAsync();
     const constructorCall = vi.mocked(WebviewWindow).mock.calls[0]!;
     const url = constructorCall[1]!.url as string;
     expect(url).toContain('/reader?');
     expect(url).toContain('ids=book1%2Bbook2');
   });
 
-  test('uses macOS-specific window options', () => {
+  test('uses macOS-specific window options', async () => {
     const appService = makeAppService(true);
     showReaderWindow(appService as never, ['book1']);
 
+    await flushAsync();
     const constructorCall = vi.mocked(WebviewWindow).mock.calls[0]!;
     const options = constructorCall[1]!;
     expect(options.title).toBe('');
@@ -335,10 +352,11 @@ describe('showReaderWindow', () => {
     expect(options.titleBarStyle).toBe('overlay');
   });
 
-  test('uses non-macOS window options', () => {
+  test('uses non-macOS window options', async () => {
     const appService = makeAppService(false);
     showReaderWindow(appService as never, ['book1']);
 
+    await flushAsync();
     const constructorCall = vi.mocked(WebviewWindow).mock.calls[0]!;
     const options = constructorCall[1]!;
     expect(options.title).toBe('Readest');
@@ -349,11 +367,11 @@ describe('showReaderWindow', () => {
 });
 
 describe('showLibraryWindow', () => {
-  test('creates a new WebviewWindow with file params', () => {
+  test('creates a new WebviewWindow with file params', async () => {
     const appService = makeAppService();
     showLibraryWindow(appService as never, ['file1.epub', 'file2.epub']);
 
-    expect(WebviewWindow).toHaveBeenCalled();
+    await flushAsync();
     const constructorCall = vi.mocked(WebviewWindow).mock.calls[0]!;
     const url = constructorCall[1]!.url as string;
     expect(url).toContain('/library?');

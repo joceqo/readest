@@ -36,6 +36,28 @@ pub fn setup_macos_menu(app: &AppHandle) -> tauri::Result<()> {
         }
     }
 
+    // Insert "Readest Settings..." right after "About Readest" in the app
+    // submenu so we match the standard macOS app-menu shape and bind Cmd+,
+    // to it. Tauri's default app submenu is the first submenu in
+    // `global_menu`.
+    //
+    // The title intentionally avoids the bare "Settings..." / "Preferences..."
+    // strings: AppKit auto-binds those exact titles to predefined system
+    // selectors at click time, which short-circuits Tauri's menu event
+    // dispatcher. The Cmd+, accelerator goes through a different keystroke
+    // path so it still fires the event, but the menu-item click is
+    // swallowed. Using a non-magic title keeps the click flowing through
+    // Tauri's normal `on_menu_event` listener.
+    let settings_item = MenuItemBuilder::new("Readest Settings...")
+        .id("open_settings")
+        .accelerator("Cmd+,")
+        .build(app)?;
+    if let Some(app_menu_item) = global_menu.items()?.first() {
+        if let Some(app_submenu) = app_menu_item.as_submenu() {
+            app_submenu.insert(&settings_item, 1)?;
+        }
+    }
+
     global_menu.append(
         &SubmenuBuilder::new(app, "Help")
             .text("privacy_policy", "Privacy Policy")
@@ -53,9 +75,16 @@ pub fn setup_macos_menu(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn handle_menu_event(app: &AppHandle, event: &MenuEvent) {
+    // Temporary diagnostic to debug a menu-click vs accelerator discrepancy
+    // for the Settings item. Remove once the menu wiring is settled.
+    eprintln!("[menu] event id = {:?}", event.id());
     let opener = app.opener();
     if event.id() == "open_file" {
         handle_open_file(app);
+    } else if event.id() == "open_settings" {
+        // Broadcast to all windows; each window's frontend decides whether
+        // to open its in-app Settings dialog based on its own state.
+        let _ = app.emit("open-settings", ());
     } else if event.id() == "privacy_policy" {
         let _ = opener.open_url("https://readest.com/privacy-policy", None::<&str>);
     } else if event.id() == "report_issue" {

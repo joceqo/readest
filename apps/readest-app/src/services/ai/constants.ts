@@ -27,6 +27,10 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   ollamaModel: 'llama3.2',
   ollamaEmbeddingModel: 'nomic-embed-text',
 
+  lmstudioBaseUrl: 'http://127.0.0.1:1234',
+  lmstudioModel: '',
+  lmstudioEmbeddingModel: '',
+
   aiGatewayModel: 'google/gemini-2.5-flash-lite',
   aiGatewayEmbeddingModel: 'openai/text-embedding-3-small',
 
