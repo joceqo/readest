@@ -159,6 +159,7 @@
     "jwt-decode": "^4.0.0",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.562.0",
+    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "lunr": "^2.3.9",
     "marked": "^15.0.12",
     "nanoid": "^5.1.6",

@@ -3,6 +3,7 @@ import { TTSGranularity, TTSMark, TTSVoice, TTSVoicesGroup } from './types';
 import { parseSSMLMarks } from '@/utils/ssml';
 import { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
+import { installModelFetchInterceptor } from './modelCache';
 
 // Match the kokoro-js voice map shape without importing the package at load
 // time (it pulls in @huggingface/transformers + ONNX runtime, which we want
@@ -32,6 +33,16 @@ const KOKORO_DTYPE = 'q8' as const;
 
 const ENGINE_ID = 'kokoro-tts';
 const ENGINE_NAME = 'Kokoro (Local Neural)';
+
+// Stable cache key for $APPDATA/Readest/models/<engine>/. kokoro-js asks
+// transformers.js to fetch from `huggingface.co/<KOKORO_MODEL_ID>/resolve/...`
+// — we intercept those requests once and route through the disk cache so
+// the model survives an IndexedDB wipe (the user's "offline → lost voice"
+// symptom). The interceptor is installed lazily on the first speak() so
+// it's never set up for users who never pick a Kokoro voice.
+const KOKORO_CACHE_KEY = 'kokoro-82m-v1';
+const KOKORO_URL_PREFIX = `https://huggingface.co/${KOKORO_MODEL_ID}/resolve/`;
+let fetchInterceptorInstalled = false;
 
 /**
  * Kokoro 82M TTS running entirely in the browser via kokoro-js (Transformers.js
@@ -126,6 +137,23 @@ export class KokoroTTSClient implements TTSClient {
       // Dynamic import so kokoro-js + transformers + ONNX runtime stay out
       // of the SSR bundle and only load when someone actually picks Kokoro.
       this.#loadPromise = (async () => {
+        if (!fetchInterceptorInstalled) {
+          // Strip the `<revision>/` segment when computing the on-disk
+          // filename — transformers.js may resolve a specific commit SHA
+          // depending on cache state, but the underlying file (config.json,
+          // *.onnx, voices.bin, …) is identical and shouldn't be re-cached
+          // per revision. Filename is everything after `resolve/<rev>/`.
+          installModelFetchInterceptor({
+            engine: KOKORO_CACHE_KEY,
+            urlPrefix: KOKORO_URL_PREFIX,
+            urlToFilename: (url) => {
+              const tail = url.slice(KOKORO_URL_PREFIX.length).split('?')[0]!;
+              const slash = tail.indexOf('/');
+              return slash >= 0 ? tail.slice(slash + 1) : tail;
+            },
+          });
+          fetchInterceptorInstalled = true;
+        }
         const mod = await import('kokoro-js');
         const tts = (await mod.KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
           dtype: KOKORO_DTYPE,
