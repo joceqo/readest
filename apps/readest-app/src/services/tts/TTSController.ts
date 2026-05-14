@@ -9,6 +9,7 @@ import { WebSpeechClient } from './WebSpeechClient';
 import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
 import { KokoroTTSClient } from './KokoroTTSClient';
+import { KyutaiTTSClient } from './KyutaiTTSClient';
 import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
 import { isValidLang } from '@/utils/lang';
@@ -44,10 +45,12 @@ export class TTSController extends EventTarget {
   ttsWebClient: TTSClient;
   ttsEdgeClient: TTSClient;
   ttsKokoroClient: TTSClient;
+  ttsKyutaiClient: TTSClient;
   ttsNativeClient: TTSClient | null = null;
   ttsWebVoices: TTSVoice[] = [];
   ttsEdgeVoices: TTSVoice[] = [];
   ttsKokoroVoices: TTSVoice[] = [];
+  ttsKyutaiVoices: TTSVoice[] = [];
   ttsNativeVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
 
@@ -64,6 +67,7 @@ export class TTSController extends EventTarget {
     this.ttsWebClient = new WebSpeechClient(this);
     this.ttsEdgeClient = new EdgeTTSClient(this, appService);
     this.ttsKokoroClient = new KokoroTTSClient(this);
+    this.ttsKyutaiClient = new KyutaiTTSClient(this);
     // TODO: implement native TTS client for iOS and PC
     if (appService?.isAndroidApp) {
       this.ttsNativeClient = new NativeTTSClient(this);
@@ -91,6 +95,10 @@ export class TTSController extends EventTarget {
     if (await this.ttsKokoroClient.init()) {
       availableClients.push(this.ttsKokoroClient);
       this.ttsKokoroVoices = await this.ttsKokoroClient.getAllVoices();
+    }
+    if (await this.ttsKyutaiClient.init()) {
+      availableClients.push(this.ttsKyutaiClient);
+      this.ttsKyutaiVoices = await this.ttsKyutaiClient.getAllVoices();
     }
     this.ttsClient = availableClients[0] || this.ttsWebClient;
     const preferredClientName = TTSUtils.getPreferredClient();
@@ -539,6 +547,7 @@ export class TTSController extends EventTarget {
     if (this.ttsEdgeClient.initialized) this.ttsEdgeClient.setPrimaryLang(lang);
     if (this.ttsWebClient.initialized) this.ttsWebClient.setPrimaryLang(lang);
     if (this.ttsKokoroClient.initialized) this.ttsKokoroClient.setPrimaryLang(lang);
+    if (this.ttsKyutaiClient.initialized) this.ttsKyutaiClient.setPrimaryLang(lang);
     if (this.ttsNativeClient?.initialized) this.ttsNativeClient?.setPrimaryLang(lang);
   }
 
@@ -552,9 +561,12 @@ export class TTSController extends EventTarget {
     const ttsWebVoices = await this.ttsWebClient.getVoices(lang);
     const ttsEdgeVoices = await this.ttsEdgeClient.getVoices(lang);
     const ttsKokoroVoices = await this.ttsKokoroClient.getVoices(lang);
+    const ttsKyutaiVoices = await this.ttsKyutaiClient.getVoices(lang);
     const ttsNativeVoices = (await this.ttsNativeClient?.getVoices(lang)) ?? [];
+    this.ttsKyutaiVoices = ttsKyutaiVoices.flatMap((group) => group.voices);
 
     const voicesGroups = [
+      ...ttsKyutaiVoices,
       ...ttsKokoroVoices,
       ...ttsNativeVoices,
       ...ttsEdgeVoices,
@@ -571,10 +583,16 @@ export class TTSController extends EventTarget {
     const useKokoroTTS = !!this.ttsKokoroVoices.find(
       (voice) => voice.id === voiceId && !voice.disabled,
     );
+    const useKyutaiTTS = !!this.ttsKyutaiVoices.find(
+      (voice) => voice.id === voiceId && !voice.disabled,
+    );
     const useNativeTTS = !!this.ttsNativeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
-    if (useKokoroTTS) {
+    if (useKyutaiTTS) {
+      this.ttsClient = this.ttsKyutaiClient;
+      await this.ttsClient.setRate(this.ttsRate);
+    } else if (useKokoroTTS) {
       this.ttsClient = this.ttsKokoroClient;
       await this.ttsClient.setRate(this.ttsRate);
     } else if (useEdgeTTS) {
@@ -654,6 +672,12 @@ export class TTSController extends EventTarget {
     }
     if (this.ttsEdgeClient.initialized) {
       await this.ttsEdgeClient.shutdown();
+    }
+    if (this.ttsKokoroClient.initialized) {
+      await this.ttsKokoroClient.shutdown();
+    }
+    if (this.ttsKyutaiClient.initialized) {
+      await this.ttsKyutaiClient.shutdown();
     }
     if (this.ttsNativeClient?.initialized) {
       await this.ttsNativeClient.shutdown();
