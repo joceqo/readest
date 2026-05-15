@@ -5,11 +5,11 @@ import { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { isTauriAppPlatform } from '@/services/environment';
+import { useSettingsStore } from '@/store/settingsStore';
+import { DEFAULT_KYUTAI_SETTINGS } from './kyutaiSettings';
 
 const ENGINE_ID = 'kyutai-tts';
 const ENGINE_NAME = 'Kyutai Pocket TTS';
-const DEFAULT_BASE_URL = 'http://127.0.0.1:8000';
-const BASE_URL_STORAGE_KEY = 'kyutaiTTSBaseUrl';
 
 type KyutaiVoice = TTSVoice & {
   voiceUrl: string;
@@ -29,7 +29,6 @@ export class KyutaiTTSClient implements TTSClient {
   initialized = false;
   controller?: TTSController;
 
-  #baseUrl = DEFAULT_BASE_URL;
   #voices: KyutaiVoice[] = KYUTAI_VOICES.map((voice) => ({ ...voice }));
   #primaryLang = 'en';
   #speakingLang = '';
@@ -44,14 +43,20 @@ export class KyutaiTTSClient implements TTSClient {
   }
 
   async init(): Promise<boolean> {
-    this.#baseUrl = this.#getBaseUrl();
     this.initialized = await this.#healthCheck();
     return this.initialized;
   }
 
+  // Read the base URL fresh from the settings store on every call so that
+  // edits in the Local TTS settings panel take effect on the next playback
+  // without needing to restart the client. Trailing slashes are stripped
+  // because `${baseUrl}/health` would otherwise produce a double slash that
+  // some servers (and Tauri's HTTP plugin URL parser) reject.
   #getBaseUrl(): string {
-    if (typeof window === 'undefined') return DEFAULT_BASE_URL;
-    return localStorage.getItem(BASE_URL_STORAGE_KEY)?.trim() || DEFAULT_BASE_URL;
+    const stored =
+      useSettingsStore.getState().settings?.kyutaiSettings?.baseUrl?.trim() || '';
+    const url = stored || DEFAULT_KYUTAI_SETTINGS.baseUrl;
+    return url.replace(/\/+$/, '');
   }
 
   async #healthCheck(): Promise<boolean> {
@@ -59,7 +64,7 @@ export class KyutaiTTSClient implements TTSClient {
     const timeout = globalThis.setTimeout(() => controller.abort(), 1200);
     try {
       const fetchImpl = isTauriAppPlatform() ? tauriFetch : window.fetch.bind(window);
-      const response = await fetchImpl(`${this.#baseUrl}/health`, {
+      const response = await fetchImpl(`${this.#getBaseUrl()}/health`, {
         signal: controller.signal,
         cache: 'no-store',
       });
@@ -81,7 +86,7 @@ export class KyutaiTTSClient implements TTSClient {
     body.set('voice_url', voice.voiceUrl);
 
     const fetchImpl = isTauriAppPlatform() ? tauriFetch : window.fetch.bind(window);
-    const response = await fetchImpl(`${this.#baseUrl}/tts`, {
+    const response = await fetchImpl(`${this.#getBaseUrl()}/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
@@ -113,7 +118,7 @@ export class KyutaiTTSClient implements TTSClient {
       if (!this.initialized) {
         yield {
           code: 'error',
-          message: `Kyutai Pocket TTS is not running at ${this.#baseUrl}`,
+          message: `Kyutai Pocket TTS is not running at ${this.#getBaseUrl()}`,
         } as TTSMessageEvent;
         return;
       }

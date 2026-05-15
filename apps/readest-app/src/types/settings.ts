@@ -4,6 +4,7 @@ import { CustomTexture } from '@/styles/textures';
 import { HighlightColor, HighlightStyle, UserHighlightColor, ViewSettings } from './book';
 import { OPDSCatalog } from './opds';
 import type { AISettings } from '@/services/ai/types';
+import type { KyutaiSettings } from '@/services/tts/kyutaiSettings';
 import type { NotebookTab } from '@/store/notebookStore';
 import type { DictionarySettings, ImportedDictionary } from '@/services/dictionaries/types';
 
@@ -169,6 +170,13 @@ export interface SystemSettings {
   hardcover: HardcoverSettings;
 
   aiSettings: AISettings;
+  /**
+   * Settings for the local Kyutai Pocket TTS HTTP server. Lives in the
+   * settings store so it sync-replicates across devices like other engine
+   * configs, even though the server itself is expected to run on
+   * 127.0.0.1.
+   */
+  kyutaiSettings: KyutaiSettings;
   /**
    * Per-device id used as the deviceId portion of every HLC this device
    * mints. Lazy-generated on first sync init via uuidv4 (mirrors

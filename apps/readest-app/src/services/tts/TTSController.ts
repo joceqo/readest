@@ -406,12 +406,29 @@ export class TTSController extends EventTarget {
           }
           await this.preloadSSML(ssml, signal);
         }
+        console.warn(
+          '[TTS-dispatch] engine=',
+          this.ttsClient.name,
+          'voiceId=',
+          this.ttsClient.getVoiceId(),
+          'speakingLang=',
+          this.ttsClient.getSpeakingLang(),
+          'primaryLang=',
+          this.ttsLang,
+          'rate=',
+          this.ttsRate,
+        );
         const iter = await this.ttsClient.speak(ssml, signal);
         let lastCode;
-        for await (const { code } of iter) {
+        for await (const { code, message } of iter) {
           if (signal.aborted) {
             resolve();
             return;
+          }
+          if (code === 'error') {
+            console.warn('[TTS-dispatch] engine error:', message);
+          } else if (code === 'end') {
+            console.warn('[TTS-dispatch] engine end:', message);
           }
           lastCode = code;
         }
