@@ -5,5 +5,6 @@ export * from './EdgeTTSClient';
 export * from './NativeTTSClient';
 export * from './KokoroTTSClient';
 export * from './KyutaiTTSClient';
+export * from './SupertonicTTSClient';
 export * from './TTSController';
 export * from './TTSData';

@@ -91,6 +91,16 @@ const nextConfig = {
     ];
   },
   async headers() {
+    // NOTE: COOP/COEP headers (needed for SharedArrayBuffer / multi-threaded
+    // WASM in onnxruntime-web) are deliberately NOT enabled here. Tauri's
+    // WKWebView blocks ORT's bundled worker under COEP=require-corp anyway
+    // (the worker URL ends up being treated as cross-origin), so the headers
+    // cost the page real things (e.g. phonemizer's espeak-ng WASM loaded by
+    // kokoro-js fails to initialise, which presents as
+    //   `iha_phonemizer_dist_phonemizer.js: undefined is not a function`)
+    // without buying multi-thread WASM in practice. Until we have a working
+    // recipe for SAB in Tauri (probably involving a custom asset protocol),
+    // we run ORT in single-thread mode and leave the page un-isolated.
     return [
       {
         source: '/.well-known/apple-app-site-association',

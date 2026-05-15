@@ -38,6 +38,12 @@ vi.mock('@/services/tts/KyutaiTTSClient', () => ({
   }),
 }));
 
+vi.mock('@/services/tts/SupertonicTTSClient', () => ({
+  SupertonicTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, createMockTTSClient('supertonic'));
+  }),
+}));
+
 vi.mock('@/services/tts/TTSUtils', () => ({
   TTSUtils: {
     getPreferredClient: vi.fn().mockReturnValue(null),
