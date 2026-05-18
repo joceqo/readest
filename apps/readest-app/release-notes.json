@@ -1,5 +1,14 @@
 {
   "releases": {
+    "0.11.3": {
+      "date": "2026-05-18",
+      "notes": [
+        "AI: LM Studio can auto-load an embedding or chat model when none is selected in Settings, and RAG/chat now pass the loaded model id to the API so indexing no longer hits “no models loaded” with the wrong default",
+        "AI: Clearer error messages for local providers, LM Studio load toasts when models are missing or misconfigured, and more reliable embedding timeouts/retries",
+        "AI Assistant: Fixed an empty notebook panel when a conversation exists but has no messages yet",
+        "Developer: react-grab loads in development via a small client component instead of a remote script tag"
+      ]
+    },
     "0.11.2": {
       "date": "2026-05-18",
       "notes": [

@@ -2,6 +2,8 @@ import { embed, embedMany } from 'ai';
 import { aiStore } from './storage/aiStore';
 import { chunkSection, extractTextFromDocument } from './utils/chunker';
 import { withRetryAndTimeout, AI_TIMEOUTS, AI_RETRY_CONFIGS } from './utils/retry';
+import { formatAIProviderError } from './utils/formatAIError';
+import { ensureLMStudioModelsLoaded } from './utils/lmStudioLoad';
 import { getAIProvider } from './providers';
 import { aiLogger } from './logger';
 import type { AISettings, TextChunk, ScoredChunk, EmbeddingProgress, BookIndexMeta } from './types';
@@ -131,11 +133,24 @@ export async function indexBook(
     }
 
     onProgress?.({ current: 0, total: allChunks.length, phase: 'embedding' });
-    const embeddingModelName =
+    let embeddingModelName =
       settings.provider === 'ollama'
         ? settings.ollamaEmbeddingModel
-        : settings.aiGatewayEmbeddingModel || 'text-embedding-3-small';
-    aiLogger.embedding.start(embeddingModelName, allChunks.length);
+        : settings.provider === 'lmstudio'
+          ? settings.lmstudioEmbeddingModel?.trim() || ''
+          : settings.aiGatewayEmbeddingModel || 'text-embedding-3-small';
+
+    if (settings.provider === 'lmstudio') {
+      const resolved = await ensureLMStudioModelsLoaded(settings, { chat: false, embedding: true });
+      if (resolved.embeddingModelId) {
+        provider.setEmbeddingModelIdOverride?.(resolved.embeddingModelId);
+        if (!embeddingModelName) {
+          embeddingModelName = resolved.embeddingModelId;
+        }
+      }
+    }
+
+    aiLogger.embedding.start(embeddingModelName || '(default)', allChunks.length);
 
     const texts = allChunks.map((c) => c.text);
     try {
@@ -157,8 +172,14 @@ export async function indexBook(
       onProgress?.({ current: allChunks.length, total: allChunks.length, phase: 'embedding' });
       aiLogger.embedding.complete(embeddings.length, allChunks.length, embeddings[0]?.length || 0);
     } catch (e) {
-      aiLogger.embedding.error('batch', (e as Error).message);
-      throw e;
+      const detail = formatAIProviderError(e);
+      aiLogger.embedding.error('batch', detail);
+      const wrapped = new Error(detail, { cause: e });
+      throw wrapped;
+    } finally {
+      if (settings.provider === 'lmstudio') {
+        provider.setEmbeddingModelIdOverride?.(null);
+      }
     }
 
     onProgress?.({ current: 0, total: 2, phase: 'indexing' });
@@ -187,9 +208,12 @@ export async function indexBook(
     aiLogger.rag.indexComplete(bookHash, allChunks.length, Date.now() - startTime);
   } catch (error) {
     state.status = 'error';
-    state.error = (error as Error).message;
-    aiLogger.rag.indexError(bookHash, (error as Error).message);
-    throw error;
+    const detail = formatAIProviderError(error);
+    state.error = detail;
+    aiLogger.rag.indexError(bookHash, detail);
+    throw error instanceof Error && error.message === detail
+      ? error
+      : new Error(detail, { cause: error });
   }
 }
 
@@ -205,6 +229,12 @@ export async function hybridSearch(
   let queryEmbedding: number[] | null = null;
 
   try {
+    if (settings.provider === 'lmstudio') {
+      const resolved = await ensureLMStudioModelsLoaded(settings, { chat: false, embedding: true });
+      if (resolved.embeddingModelId) {
+        provider.setEmbeddingModelIdOverride?.(resolved.embeddingModelId);
+      }
+    }
     // use AI SDK embed with provider's embedding model
     const { embedding } = await withRetryAndTimeout(
       () =>
@@ -218,6 +248,10 @@ export async function hybridSearch(
     queryEmbedding = embedding;
   } catch {
     // bm25 only fallback
+  } finally {
+    if (settings.provider === 'lmstudio') {
+      provider.setEmbeddingModelIdOverride?.(null);
+    }
   }
 
   const results = await aiStore.hybridSearch(bookHash, queryEmbedding, query, topK, maxPage);

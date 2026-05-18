@@ -3,6 +3,7 @@ import type { LanguageModel, EmbeddingModel } from 'ai';
 import type { AIProvider, AISettings, AIProviderName } from '../types';
 import { aiLogger } from '../logger';
 import { AI_TIMEOUTS } from '../utils/retry';
+import { localAiFetch } from '../utils/localAiFetch';
 
 const DEFAULT_BASE = 'http://127.0.0.1:1234';
 
@@ -22,6 +23,8 @@ export class LMStudioProvider implements AIProvider {
 
   private client;
   private settings: AISettings;
+  #embeddingModelIdOverride: string | null = null;
+  #chatModelIdOverride: string | null = null;
 
   constructor(settings: AISettings) {
     this.settings = settings;
@@ -34,17 +37,27 @@ export class LMStudioProvider implements AIProvider {
       // an Authorization header so we provide a placeholder value to
       // satisfy strict OpenAI-style HTTP clients.
       apiKey: 'lm-studio',
+      fetch: localAiFetch as typeof fetch,
     });
     aiLogger.provider.init('lmstudio', settings.lmstudioModel || 'unset');
   }
 
+  setEmbeddingModelIdOverride(id: string | null): void {
+    this.#embeddingModelIdOverride = id;
+  }
+
+  setChatModelIdOverride(id: string | null): void {
+    this.#chatModelIdOverride = id;
+  }
+
   getModel(): LanguageModel {
-    return this.client(this.settings.lmstudioModel || 'gpt-4o-mini');
+    return this.client(this.#chatModelIdOverride ?? (this.settings.lmstudioModel || 'gpt-4o-mini'));
   }
 
   getEmbeddingModel(): EmbeddingModel {
     return this.client.textEmbeddingModel(
-      this.settings.lmstudioEmbeddingModel || 'text-embedding-3-small',
+      this.#embeddingModelIdOverride ??
+        (this.settings.lmstudioEmbeddingModel || 'text-embedding-3-small'),
     );
   }
 
@@ -59,7 +72,7 @@ export class LMStudioProvider implements AIProvider {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AI_TIMEOUTS.OLLAMA_CONNECT);
       const base = (this.settings.lmstudioBaseUrl || DEFAULT_BASE).replace(/\/+$/, '');
-      const response = await fetch(`${base}/v1/models`, { signal: controller.signal });
+      const response = await localAiFetch(`${base}/v1/models`, { signal: controller.signal });
       clearTimeout(timeout);
       return response.ok;
     } catch {
@@ -72,7 +85,7 @@ export class LMStudioProvider implements AIProvider {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AI_TIMEOUTS.HEALTH_CHECK);
       const base = (this.settings.lmstudioBaseUrl || DEFAULT_BASE).replace(/\/+$/, '');
-      const response = await fetch(`${base}/v1/models`, { signal: controller.signal });
+      const response = await localAiFetch(`${base}/v1/models`, { signal: controller.signal });
       clearTimeout(timeout);
       if (!response.ok) return false;
       const data = await response.json();

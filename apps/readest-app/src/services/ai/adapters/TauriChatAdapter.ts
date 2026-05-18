@@ -3,6 +3,7 @@ import type { ChatModelAdapter, ChatModelRunResult } from '@assistant-ui/react';
 import { getAIProvider } from '../providers';
 import { hybridSearch, isBookIndexed } from '../ragService';
 import { aiLogger } from '../logger';
+import { ensureLMStudioModelsLoaded } from '../utils/lmStudioLoad';
 import { buildSystemPrompt } from '../prompts';
 import type { AISettings, ScoredChunk } from '../types';
 
@@ -63,6 +64,15 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
       const options = getOptions();
       const { settings, bookHash, bookTitle, authorName, currentPage } = options;
       const provider = getAIProvider(settings);
+      if (settings.provider === 'lmstudio') {
+        const resolved = await ensureLMStudioModelsLoaded(settings, {
+          chat: true,
+          embedding: false,
+        });
+        if (resolved.chatModelId) {
+          provider.setChatModelIdOverride?.(resolved.chatModelId);
+        }
+      }
       let chunks: ScoredChunk[] = [];
 
       const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
@@ -108,31 +118,37 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
 
         let text = '';
 
-        if (useApiRoute) {
-          for await (const chunk of streamViaApiRoute(
-            aiMessages,
-            systemPrompt,
-            settings,
-            abortSignal,
-          )) {
-            text += chunk;
-            yield { content: [{ type: 'text', text }] };
-          }
-        } else {
-          const result = streamText({
-            model: provider.getModel(),
-            system: systemPrompt,
-            messages: aiMessages,
-            abortSignal,
-          });
+        try {
+          if (useApiRoute) {
+            for await (const chunk of streamViaApiRoute(
+              aiMessages,
+              systemPrompt,
+              settings,
+              abortSignal,
+            )) {
+              text += chunk;
+              yield { content: [{ type: 'text', text }] };
+            }
+          } else {
+            const result = streamText({
+              model: provider.getModel(),
+              system: systemPrompt,
+              messages: aiMessages,
+              abortSignal,
+            });
 
-          for await (const chunk of result.textStream) {
-            text += chunk;
-            yield { content: [{ type: 'text', text }] };
+            for await (const chunk of result.textStream) {
+              text += chunk;
+              yield { content: [{ type: 'text', text }] };
+            }
+          }
+
+          aiLogger.chat.complete(text.length);
+        } finally {
+          if (settings.provider === 'lmstudio') {
+            provider.setChatModelIdOverride?.(null);
           }
         }
-
-        aiLogger.chat.complete(text.length);
       } catch (error) {
         if ((error as Error).name !== 'AbortError') {
           aiLogger.chat.error((error as Error).message);

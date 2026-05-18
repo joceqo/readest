@@ -3,6 +3,7 @@ import type { LanguageModel, EmbeddingModel } from 'ai';
 import type { AIProvider, AISettings, AIProviderName } from '../types';
 import { aiLogger } from '../logger';
 import { AI_TIMEOUTS } from '../utils/retry';
+import { localAiFetch } from '../utils/localAiFetch';
 
 export class OllamaProvider implements AIProvider {
   id: AIProviderName = 'ollama';
@@ -12,10 +13,15 @@ export class OllamaProvider implements AIProvider {
   private ollama;
   private settings: AISettings;
 
+  private baseUrl(): string {
+    return (this.settings.ollamaBaseUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+  }
+
   constructor(settings: AISettings) {
     this.settings = settings;
     this.ollama = createOllama({
-      baseURL: settings.ollamaBaseUrl || 'http://127.0.0.1:11434',
+      baseURL: this.baseUrl(),
+      fetch: localAiFetch as typeof fetch,
     });
     aiLogger.provider.init('ollama', settings.ollamaModel || 'llama3.2');
   }
@@ -32,7 +38,7 @@ export class OllamaProvider implements AIProvider {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AI_TIMEOUTS.OLLAMA_CONNECT);
-      const response = await fetch(`${this.settings.ollamaBaseUrl}/api/tags`, {
+      const response = await localAiFetch(`${this.baseUrl()}/api/tags`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -46,7 +52,7 @@ export class OllamaProvider implements AIProvider {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AI_TIMEOUTS.HEALTH_CHECK);
-      const response = await fetch(`${this.settings.ollamaBaseUrl}/api/tags`, {
+      const response = await localAiFetch(`${this.baseUrl()}/api/tags`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);

@@ -11,6 +11,7 @@ import {
 
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
+import { getAIProvider } from '@/services/ai/providers';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useAIChatStore } from '@/store/aiChatStore';
@@ -235,7 +236,8 @@ const ThreadWrapper = ({
 const AIAssistant = ({ bookKey }: AIAssistantProps) => {
   const _ = useTranslation();
   const { appService } = useEnv();
-  const { settings } = useSettingsStore();
+  const { settings, setRequestedPanel, setSettingsDialogBookKey, setSettingsDialogOpen } =
+    useSettingsStore();
   const { getBookData } = useBookDataStore();
   const { getProgress } = useReaderStore();
   const bookData = getBookData(bookKey);
@@ -245,12 +247,22 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState<EmbeddingProgress | null>(null);
   const [indexed, setIndexed] = useState(false);
+  const [indexError, setIndexError] = useState<string | null>(null);
+  const [providerState, setProviderState] = useState<
+    'checking' | 'ready' | 'degraded' | 'unavailable'
+  >('checking');
 
   const bookHash = bookKey.split('-')[0] || '';
   const bookTitle = bookData?.book?.title || 'Unknown';
   const authorName = bookData?.book?.author || '';
   const currentPage = progress?.pageinfo?.current ?? 0;
   const aiSettings = settings?.aiSettings;
+
+  const openAiSettings = useCallback(() => {
+    setRequestedPanel('AI');
+    setSettingsDialogBookKey(bookKey);
+    setSettingsDialogOpen(true);
+  }, [bookKey, setRequestedPanel, setSettingsDialogBookKey, setSettingsDialogOpen]);
 
   // check if book is indexed on mount
   useEffect(() => {
@@ -264,9 +276,42 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
     }
   }, [bookHash]);
 
+  // Reachability: local providers often fail in webview/browser with "Load failed" unless we use the right path.
+  useEffect(() => {
+    if (!aiSettings?.enabled) return;
+
+    if (aiSettings.provider === 'ai-gateway' && !aiSettings.aiGatewayApiKey?.trim()) {
+      setProviderState('unavailable');
+      return;
+    }
+
+    let cancelled = false;
+    setProviderState('checking');
+    void (async () => {
+      try {
+        const provider = getAIProvider(aiSettings);
+        const ok = await provider.isAvailable();
+        if (cancelled) return;
+        if (!ok) {
+          setProviderState('unavailable');
+          return;
+        }
+        const healthy = await provider.healthCheck();
+        if (cancelled) return;
+        setProviderState(healthy ? 'ready' : 'degraded');
+      } catch {
+        if (!cancelled) setProviderState('unavailable');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [aiSettings]);
+
   const handleIndex = useCallback(async () => {
     if (!bookData?.bookDoc || !aiSettings) return;
     setIsIndexing(true);
+    setIndexError(null);
     try {
       await indexBook(
         bookData.bookDoc as Parameters<typeof indexBook>[0],
@@ -276,7 +321,9 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
       );
       setIndexed(true);
     } catch (e) {
-      aiLogger.rag.indexError(bookHash, (e as Error).message);
+      const message = (e as Error).message || String(e);
+      aiLogger.rag.indexError(bookHash, message);
+      setIndexError(message);
     } finally {
       setIsIndexing(false);
       setIndexProgress(null);
@@ -288,6 +335,7 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
     if (!(await appService.ask(_('Are you sure you want to re-index this book?')))) return;
     await aiStore.clearBook(bookHash);
     setIndexed(false);
+    setIndexError(null);
   }, [bookHash, appService, _]);
 
   if (!aiSettings?.enabled) {
@@ -298,9 +346,31 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
     );
   }
 
-  // show nothing while checking index status to prevent flicker
-  if (isLoading) {
+  // show nothing while checking index status or provider reachability
+  if (isLoading || providerState === 'checking') {
     return null;
+  }
+
+  if (providerState === 'unavailable') {
+    const isGateway = aiSettings.provider === 'ai-gateway';
+    return (
+      <div className='flex h-full flex-col items-center justify-center gap-3 p-4 text-center'>
+        <div className='bg-warning/10 rounded-full p-3'>
+          <BookOpenIcon className='text-warning size-6' />
+        </div>
+        <div>
+          <h3 className='text-foreground mb-1 text-sm font-medium'>
+            {_('AI provider unreachable')}
+          </h3>
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {isGateway ? _('AI Gateway needs API key') : _('AI provider unreachable hint')}
+          </p>
+        </div>
+        <Button onClick={openAiSettings} size='sm' variant='secondary' className='h-8 text-xs'>
+          {_('Open AI Settings')}
+        </Button>
+      </div>
+    );
   }
 
   const progressPercent =
@@ -309,8 +379,15 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
       : 0;
 
   if (!indexed && !isIndexing) {
+    const loadFailed =
+      indexError && indexError.toLowerCase().includes('load failed') ? _('Load failed hint') : null;
     return (
       <div className='flex h-full flex-col items-center justify-center gap-3 p-4 text-center'>
+        {providerState === 'degraded' && (
+          <p className='text-warning bg-warning/10 w-full rounded-md px-2 py-1.5 text-xs leading-snug'>
+            {_('AI models may be misconfigured')}
+          </p>
+        )}
         <div className='bg-primary/10 rounded-full p-3'>
           <BookOpenIcon className='text-primary size-6' />
         </div>
@@ -320,6 +397,16 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
             {_('Enable AI search and chat for this book')}
           </p>
         </div>
+        {indexError && (
+          <div className='w-full space-y-1'>
+            <p className='text-destructive text-xs font-medium'>
+              {_('Indexing failed')}: {indexError}
+            </p>
+            {loadFailed ? (
+              <p className='text-muted-foreground text-xs leading-snug'>{loadFailed}</p>
+            ) : null}
+          </div>
+        )}
         <Button onClick={handleIndex} size='sm' className='h-8 text-xs'>
           <BookOpenIcon className='mr-1.5 size-3.5' />
           {_('Start Indexing')}

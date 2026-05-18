@@ -42,16 +42,21 @@ export async function withRetry<T>(
  * wraps a promise with a timeout
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number, message?: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      const id = setTimeout(() => {
-        reject(new Error(message || `Timeout after ${ms}ms`));
-      }, ms);
-      // cleanup timeout if promise resolves first
-      promise.finally(() => clearTimeout(id));
-    }),
-  ]);
+  return new Promise((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(message || `Timeout after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(id);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(id);
+        reject(err);
+      },
+    );
+  });
 }
 
 /**

@@ -116,5 +116,7 @@ export const aiLogger = {
       log('debug', 'PROVIDER', `Chat request: ${messageCount} messages`, { provider }),
     error: (provider: string, error: string) =>
       log('error', 'PROVIDER', `${provider} error: ${error}`),
+    lmStudioLoad: (modelKey: string) =>
+      log('info', 'PROVIDER', `LM Studio /api/v1/models/load`, { modelKey }),
   },
 };

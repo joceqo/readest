@@ -12,6 +12,11 @@ export interface AIProvider {
 
   isAvailable(): Promise<boolean>;
   healthCheck(): Promise<boolean>;
+
+  /** LM Studio: use this model id for the next /v1/embeddings calls (auto-load path). */
+  setEmbeddingModelIdOverride?(id: string | null): void;
+  /** LM Studio: use this model id for the next /v1/chat/completions calls. */
+  setChatModelIdOverride?(id: string | null): void;
 }
 
 export interface AISettings {

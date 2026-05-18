@@ -53,5 +53,18 @@
   "{{count}} new item(s) downloaded from OPDS_one": "{{count}} new item downloaded from OPDS",
   "{{count}} new item(s) downloaded from OPDS_other": "{{count}} new items downloaded from OPDS",
   "{{engine}}: {{count}} voices_one": "{{engine}}: {{count}} voice",
-  "{{engine}}: {{count}} voices_other": "{{engine}}: {{count}} voices"
+  "{{engine}}: {{count}} voices_other": "{{engine}}: {{count}} voices",
+  "AI provider unreachable": "Can't reach your AI provider",
+  "AI provider unreachable hint": "Start your local server (Ollama or LM Studio), confirm the URL in Settings → AI, and ensure embedding + chat models are loaded. If you see \"Load failed\" in the browser, use Readest's desktop app or fix browser access to localhost.",
+  "AI Gateway needs API key": "Add an API key in Settings → AI to use AI Gateway.",
+  "AI models may be misconfigured": "Connected, but configured models were not found on the server. Check model names in Settings → AI.",
+  "Indexing failed": "Indexing failed",
+  "Load failed hint": "Often caused by the browser blocking localhost. Try the Readest desktop app, or run your model server with CORS enabled.",
+  "Open AI Settings": "Open AI Settings",
+  "LM Studio: could not read the model list. Start the Local Server and confirm the URL under Settings → AI.": "LM Studio: could not read the model list. Start the Local Server and confirm the URL under Settings → AI.",
+  "LM Studio: no models installed. Download at least one model in LM Studio, then try again.": "LM Studio: no models installed. Download at least one model in LM Studio, then try again.",
+  "LM Studio: no embedding models installed. Add an embedding model in LM Studio for indexing and search.": "LM Studio: no embedding models installed. Add an embedding model in LM Studio for indexing and search.",
+  "LM Studio: no chat (LLM) models installed. Add a language model in LM Studio for the AI assistant.": "LM Studio: no chat (LLM) models installed. Add a language model in LM Studio for the AI assistant.",
+  "LM Studio: the embedding model in Settings was not found. Pick a model from the list in LM Studio under Settings → AI.": "LM Studio: the embedding model in Settings was not found. Pick a model from the list in LM Studio under Settings → AI.",
+  "LM Studio: the chat model in Settings was not found. Pick a model from the list in LM Studio under Settings → AI.": "LM Studio: the chat model in Settings was not found. Pick a model from the list in LM Studio under Settings → AI."
 }
