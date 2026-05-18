@@ -8,13 +8,7 @@ import { useCommandPalette } from '@/components/command-palette';
 import { RiFontSize, RiShareLine } from 'react-icons/ri';
 import { RiDashboardLine, RiTranslate } from 'react-icons/ri';
 import { VscSymbolColor } from 'react-icons/vsc';
-import {
-  PiBrain,
-  PiDotsThreeVerticalBold,
-  PiRobot,
-  PiSpeakerHigh,
-  PiWaveform,
-} from 'react-icons/pi';
+import { PiBrain, PiDotsThreeVerticalBold, PiRobot, PiSpeakerHigh } from 'react-icons/pi';
 import { LiaHandPointerSolid } from 'react-icons/lia';
 import { IoAccessibilityOutline } from 'react-icons/io5';
 import {
@@ -39,7 +33,6 @@ import LangPanel from './LangPanel';
 import MiscPanel from './MiscPanel';
 import AIPanel from './AIPanel';
 import LocalLLMPanel from './LocalLLMPanel';
-import LocalTTSPanel from './LocalTTSPanel';
 import TTSPanel from './TTSPanel';
 
 export type SettingsPanelType =
@@ -51,7 +44,6 @@ export type SettingsPanelType =
   | 'Language'
   | 'AI'
   | 'LocalLLM'
-  | 'LocalTTS'
   | 'Integrations'
   | 'Custom';
 export type SettingsPanelPanelProp = {
@@ -133,11 +125,6 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       label: _('Local LLM'),
     },
     {
-      tab: 'LocalTTS',
-      icon: PiWaveform,
-      label: _('Local TTS'),
-    },
-    {
       tab: 'Integrations',
       icon: RiShareLine,
       label: _('Integrations'),
@@ -200,7 +187,6 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     Language: null,
     AI: null,
     LocalLLM: null,
-    LocalTTS: null,
     Integrations: null,
     Custom: null,
   });
@@ -236,7 +222,6 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
         language: 'Language',
         ai: 'AI',
         localllm: 'LocalLLM',
-        localtts: 'LocalTTS',
         integrations: 'Integrations',
         custom: 'Custom',
       };
@@ -493,7 +478,6 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
         )}
         {activePanel === 'AI' && <AIPanel />}
         {activePanel === 'LocalLLM' && <LocalLLMPanel />}
-        {activePanel === 'LocalTTS' && <LocalTTSPanel />}
         {activePanel === 'Integrations' && <IntegrationsPanel />}
         {activePanel === 'Custom' && (
           <MiscPanel

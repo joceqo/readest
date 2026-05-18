@@ -1,6 +1,6 @@
 {
   "name": "@readest/readest-app",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -159,13 +159,13 @@
     "jwt-decode": "^4.0.0",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.562.0",
-    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "lunr": "^2.3.9",
     "marked": "^15.0.12",
     "nanoid": "^5.1.6",
     "next": "16.2.3",
     "next-view-transitions": "^0.3.5",
     "nunjucks": "^3.2.4",
+    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "overlayscrollbars": "^2.11.4",
     "overlayscrollbars-react": "^0.5.6",
     "posthog-js": "^1.246.0",

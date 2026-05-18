@@ -14,8 +14,9 @@ import TTSPanel from './TTSPanel';
 import TTSIcon from './TTSIcon';
 import TTSBar from './TTSBar';
 
-const POPUP_WIDTH = 282;
-const POPUP_HEIGHT = 160;
+const POPUP_WIDTH = 308;
+/** Used for placement math before the popup measures its auto height (panel is taller now). */
+const POPUP_PLACEMENT_ESTIMATE_HEIGHT = 360;
 const POPUP_PADDING = 10;
 
 interface TTSControlProps {
@@ -46,7 +47,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
   const popupPadding = useResponsiveSize(POPUP_PADDING);
   const maxWidth = window.innerWidth - 2 * popupPadding;
   const popupWidth = Math.min(maxWidth, useResponsiveSize(POPUP_WIDTH));
-  const popupHeight = useResponsiveSize(POPUP_HEIGHT);
+  const popupPlacementHeight = useResponsiveSize(POPUP_PLACEMENT_ESTIMATE_HEIGHT);
 
   const tts = useTTSControl({
     bookKey,
@@ -137,7 +138,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
         trianglePos,
         parentRect,
         popupWidth,
-        popupHeight,
+        popupPlacementHeight,
         popupPadding,
       );
 
@@ -209,10 +210,9 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
       {showPanel && panelPosition && trianglePosition && tts.ttsClientsInited && (
         <Popup
           width={popupWidth}
-          height={popupHeight}
           position={panelPosition}
           trianglePosition={trianglePosition}
-          className='bg-base-200 flex shadow-lg'
+          className='bg-base-200 flex max-h-[min(72vh,520px)] flex-col overflow-y-auto shadow-lg'
           onDismiss={handleDismissPopup}
         >
           <TTSPanel
@@ -230,6 +230,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
             onGetVoiceId={tts.handleGetVoiceId}
             onSelectTimeout={tts.handleSelectTimeout}
             onToogleTTSBar={tts.handleToggleTTSBar}
+            liveVoiceId={tts.isTTSActive ? tts.handleGetVoiceId() || undefined : undefined}
           />
         </Popup>
       )}

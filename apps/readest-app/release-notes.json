@@ -1,5 +1,13 @@
 {
   "releases": {
+    "0.11.2": {
+      "date": "2026-05-18",
+      "notes": [
+        "Text-to-Speech: Voice selection uses a larger modal with expandable engine groups; the active voice is shown in the TTS popup; raw voice ids are summarized (e.g. Edge TTS names from neural ids)",
+        "Text-to-Speech: Reader TTS popup auto-sizes correctly with the expanded controls; sticky bar toggle is easier to tap",
+        "Text-to-Speech: Removed the Kyutai local TTS integration and related settings UI"
+      ]
+    },
     "0.11.1": {
       "date": "2026-05-11",
       "notes": [
