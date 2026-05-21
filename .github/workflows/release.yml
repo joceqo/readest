@@ -302,12 +302,14 @@ jobs:
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: 'true'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Apple signing env vars intentionally omitted on this fork.
+          # tauri-action skips Apple codesigning + notarization when these are
+          # unset, producing an unsigned .dmg. Users get "developer cannot be
+          # verified" on first open and can right-click → Open to bypass.
+          # If you ever wire up an Apple Developer ID cert + App Store Connect
+          # API key, restore the APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
+          # / APPLE_SIGNING_IDENTITY / APPLE_TEAM_ID / APPLE_API_KEY /
+          # APPLE_API_ISSUER / APPLE_API_KEY_PATH env mappings here.
           NODE_OPTIONS: '--max-old-space-size=8192'
         with:
           projectPath: apps/readest-app
