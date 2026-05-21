@@ -98,6 +98,27 @@ export interface Book {
   primaryLanguage?: string;
 
   metadata?: BookMetadata;
+
+  // ---- Translated edition fields (v0.12.0) -------------------------------
+  // When all three are set, this Book entry is a *derived translated
+  // edition* of another Book in the library (see `translationOf`). The
+  // actual file content lives with the source book — the translated
+  // edition reuses it and renders translated XHTML via
+  // `createTranslatedBookDoc`. Its own annotations / progress / config
+  // partition cleanly because `hash` is distinct from the source.
+  //
+  // Translated entries have a deterministic hash derived from
+  // `(sourceHash, provider, lang)` so re-running "Create translated
+  // edition" with the same parameters reuses the existing entry instead
+  // of creating duplicates. See `getTranslatedBookHash` in
+  // src/utils/translatedBook.ts.
+
+  /** Hash of the source Book this translation was generated from. */
+  translationOf?: string;
+  /** Target language code (e.g. "fr", "en"). */
+  translationLang?: string;
+  /** Provider used to generate the translation (e.g. "deepl", "ollama"). */
+  translationProvider?: string;
 }
 
 export interface BookGroupType {

@@ -388,6 +388,22 @@ export abstract class BaseAppService implements AppService {
     return BookSvc.loadBookContent(this.fs, book);
   }
 
+  /**
+   * Returns a `TranslatedArtifactStore` bound to this app's filesystem.
+   * Used by the reader (when opening a translated edition Book) and by
+   * the library's "Create translated edition" job runner. The fs handle
+   * itself stays encapsulated — callers don't need to know which
+   * platform-specific FileSystem implementation is in use.
+   */
+  getTranslatedArtifactStore() {
+    // Lazy import keeps the small translation module out of any code
+    // path that doesn't open a translated edition.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { TranslatedArtifactStore } =
+      require('@/services/translation/translatedArtifactStore') as typeof import('@/services/translation/translatedArtifactStore');
+    return new TranslatedArtifactStore(this.fs);
+  }
+
   async loadBookConfig(book: Book, settings: SystemSettings): Promise<BookConfig> {
     return BookSvc.loadBookConfig(this.fs, book, settings);
   }

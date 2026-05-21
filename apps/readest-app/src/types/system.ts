@@ -190,6 +190,14 @@ export interface AppService {
   loadBookNav(book: Book): Promise<BookNav | null>;
   saveBookNav(book: Book, nav: BookNav): Promise<void>;
   loadBookContent(book: Book): Promise<BookContent>;
+  /**
+   * Returns a TranslatedArtifactStore bound to this app's filesystem.
+   * Concrete return type is intentionally `unknown` at the interface
+   * level so the type definition doesn't depend on the implementation
+   * file (avoids a circular import for code that only needs the AppService
+   * type). Cast to TranslatedArtifactStore at the call site.
+   */
+  getTranslatedArtifactStore(): unknown;
   loadLibraryBooks(): Promise<Book[]>;
   saveLibraryBooks(books: Book[]): Promise<void>;
   getCoverImageUrl(book: Book): string;

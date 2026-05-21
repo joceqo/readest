@@ -178,6 +178,55 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
           const doc = await openPseStreamBook(data);
           bookDoc = doc.book;
           file = null;
+        } else if (book.translationOf && book.translationLang && book.translationProvider) {
+          // Translated edition: the file content lives with the source Book.
+          // Load the source's file → parse → wrap the resulting BookDoc with
+          // createTranslatedBookDoc so section.createDocument() returns
+          // translated XHTML from the artifact store (with lazy backfill).
+          const sourceBook = getBookByHash(book.translationOf);
+          if (!sourceBook) {
+            throw new Error(
+              `Translated edition references missing source book ${book.translationOf}`,
+            );
+          }
+          const content = (await appService.loadBookContent(sourceBook)) as BookContent;
+          file = content.file;
+          const doc = await new DocumentLoader(file).open();
+          const { createTranslatedBookDoc } = await import('@/libs/translatedBookDoc');
+          const { translateSection } = await import('@/services/translation/sectionTranslator');
+          const { getTranslator } = await import('@/services/translators');
+          const { TranslatedArtifactStore } =
+            await import('@/services/translation/translatedArtifactStore');
+          const store = appService.getTranslatedArtifactStore() as InstanceType<
+            typeof TranslatedArtifactStore
+          >;
+          const provider = getTranslator(
+            book.translationProvider as Parameters<typeof getTranslator>[0],
+          );
+          // translateMissing is only wired when the configured provider is
+          // available; otherwise readers see source text for un-translated
+          // sections (graceful degrade — the user is expected to trigger
+          // a regenerate via the library UI).
+          bookDoc = createTranslatedBookDoc({
+            source: doc.book,
+            key: {
+              sourceBookHash: book.translationOf,
+              provider: book.translationProvider,
+              lang: book.translationLang,
+            },
+            store,
+            translateMissing: provider
+              ? async (sourceDoc) => {
+                  const result = await translateSection({
+                    sourceDoc,
+                    sourceLang: sourceBook.primaryLanguage ?? 'AUTO',
+                    targetLang: book.translationLang!,
+                    provider,
+                  });
+                  return result.xhtml;
+                }
+              : undefined,
+          });
         } else {
           const content = (await appService.loadBookContent(book)) as BookContent;
           file = content.file;
