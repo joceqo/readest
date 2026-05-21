@@ -8,10 +8,11 @@ import { useProofreadStore } from '@/store/proofreadStore';
 import { TransformContext } from '@/services/transformers/types';
 import { proofreadTransformer } from '@/services/transformers/proofread';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useTranslator } from '@/hooks/useTranslator';
 import { TTSController, TTSMark, TTSHighlightOptions, TTSVoicesGroup } from '@/services/tts';
 import { TauriMediaSession } from '@/libs/mediaSession';
 import { eventDispatcher } from '@/utils/event';
-import { genSSMLRaw, parseSSMLLang } from '@/utils/ssml';
+import { genSSMLRaw, parseSSMLLang, parseSSMLMarks } from '@/utils/ssml';
 import { throttle } from '@/utils/throttle';
 import { isCfiInLocation } from '@/utils/cfi';
 import { getLocale } from '@/utils/misc';
@@ -19,6 +20,14 @@ import { buildTTSMediaMetadata } from '@/utils/ttsMetadata';
 import { invokeUseBackgroundAudio } from '@/utils/bridge';
 import { estimateTTSTime } from '@/utils/ttsTime';
 import { useTTSMediaSession } from './useTTSMediaSession';
+
+const escapeXml = (s: string) =>
+  s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 
 interface UseTTSControlProps {
   bookKey: string;
@@ -343,10 +352,91 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     [],
   );
 
+  // Translator used to fix up SSML when foliate-js's TTS walker captured the
+  // off-screen source document (createDocument path in TTSController). That
+  // doc has no .translation-target siblings, so the SSML it produces has no
+  // <lang xml:lang="target"> blocks and the existing filterSSMLWithLang
+  // pass returns it unchanged. We translate the marks here so audio matches
+  // what's on screen. The translation cache (warmed by prefetchSection in
+  // useTextTranslation) makes this a free lookup for already-seen sections.
+  const ttsTranslateViewSettings = getViewSettings(bookKey);
+  const { translate: ttsTranslate } = useTranslator({
+    // `useTranslator` falls back to its default provider when this is undefined
+    // or an unknown name, so a loose cast is safe here.
+    provider: ttsTranslateViewSettings?.translationProvider as
+      | 'azure'
+      | 'deepl'
+      | 'google'
+      | 'ollama'
+      | 'yandex'
+      | undefined,
+    targetLang: ttsTranslateViewSettings?.translateTargetLang || getLocale(),
+  });
+  const ttsTranslateRef = useRef(ttsTranslate);
+  useEffect(() => {
+    ttsTranslateRef.current = ttsTranslate;
+  }, [ttsTranslate]);
+
+  const translateSSMLIfNeeded = useCallback(
+    async (ssml: string): Promise<string> => {
+      const vs = getViewSettings(bookKey);
+      if (!vs?.translationEnabled || vs?.ttsReadAloudText !== 'translated') return ssml;
+      const targetLang = vs?.translateTargetLang || getLocale();
+      if (!targetLang) return ssml;
+      // Fast path: SSML already has <lang xml:lang="target"> blocks — the
+      // visible DOM path translated this section, nothing to do.
+      const targetLangBlockRegex = new RegExp(
+        `<lang\\s+xml:lang="${targetLang}(?:-[A-Za-z]+)?"`,
+        'i',
+      );
+      if (targetLangBlockRegex.test(ssml)) return ssml;
+
+      const { marks } = parseSSMLMarks(ssml);
+      if (marks.length === 0) return ssml;
+
+      const texts = marks.map((m) => m.text);
+      let translations: string[];
+      try {
+        translations = await ttsTranslateRef.current(texts, {
+          target: targetLang,
+          useCache: true,
+        });
+      } catch (err) {
+        console.warn('[TTS-translate] translation failed, falling back to source:', err);
+        return ssml;
+      }
+
+      const speakOpenMatch = ssml.match(/<speak[^>]*>/i);
+      const speakOpen =
+        speakOpenMatch?.[0] ?? `<speak xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en">`;
+      const speakClose = `</speak>`;
+
+      const body = marks
+        .map((mark, i) => {
+          const translatedText = translations[i] || mark.text;
+          const safe = escapeXml(translatedText);
+          return `<mark name="${mark.name}"/><lang xml:lang="${targetLang}">${safe}</lang>`;
+        })
+        .join('');
+
+      const out = `${speakOpen}${body}${speakClose}`;
+      console.warn(
+        `[TTS-translate] rebuilt SSML for target=${targetLang}: ${marks.length} marks, ${texts.reduce((s, t) => s + t.length, 0)} → ${translations.reduce((s, t) => s + (t?.length ?? 0), 0)} chars`,
+      );
+      return out;
+    },
+    [bookKey, getViewSettings],
+  );
+
   const preprocessSSMLForTTS = useCallback(
     async (ssml: string) => {
       const rules = getMergedRules(bookKey);
       const viewSettings = getViewSettings(bookKey)!;
+
+      // Translation must happen BEFORE proofread, because proofread rules are
+      // tuned for the spoken target language, not the source.
+      ssml = await translateSSMLIfNeeded(ssml);
+
       const ttsOnlyRules = rules.filter(
         (rule) =>
           rule.enabled && rule.onlyForTTS && (rule.scope === 'book' || rule.scope === 'library'),
@@ -361,7 +451,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
       });
       return ssml;
     },
-    [bookKey, getMergedRules, getViewSettings, transformCtx],
+    [bookKey, getMergedRules, getViewSettings, transformCtx, translateSSMLIfNeeded],
   );
 
   // Section change callback

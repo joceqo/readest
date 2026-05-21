@@ -4,8 +4,15 @@ import { EdgeSpeechTTS, EdgeTTSPayload, EDGE_TTS_PROTOCOL } from '@/libs/edgeTTS
 import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
 import { AppService } from '@/types/system';
 import { parseSSMLMarks } from '@/utils/ssml';
+import { isSameLang } from '@/utils/lang';
 import { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
+
+const isSameLangCode = (a: string, b: string): boolean => {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return isSameLang(a, b);
+};
 
 export class EdgeTTSClient implements TTSClient {
   name = 'edge-tts';
@@ -63,11 +70,26 @@ export class EdgeTTSClient implements TTSClient {
   };
 
   getVoiceIdFromLang = async (lang: string) => {
-    const preferredVoiceId = TTSUtils.getPreferredVoice(this.name, lang);
+    // When the controller is in "translated only" mode (ttsTargetLang set),
+    // a mark whose language doesn't match the target means the SSML walker
+    // captured an un-translated source paragraph. Picking a voice for the
+    // mark's language (e.g. English) is wrong — the rest of the session is
+    // speaking the target language. Prefer the target language voice so
+    // playback stays consistent and we don't surprise the user with a
+    // sudden language switch (and so the mismatch is audible/loggable).
+    const targetLang = this.controller?.ttsTargetLang;
+    const effectiveLang = targetLang && !isSameLangCode(lang, targetLang) ? targetLang : lang;
+    if (effectiveLang !== lang) {
+      console.warn(
+        `[TTS-voice] mark lang="${lang}" mismatches ttsTargetLang="${targetLang}" — using target lang for voice selection. This usually means the SSML walker captured un-translated source text.`,
+      );
+    }
+
+    const preferredVoiceId = TTSUtils.getPreferredVoice(this.name, effectiveLang);
     const preferredVoice = this.#voices.find((v) => v.id === preferredVoiceId);
     if (preferredVoice) return preferredVoice.id;
 
-    const availableVoices = (await this.getVoices(lang))[0]?.voices || [];
+    const availableVoices = (await this.getVoices(effectiveLang))[0]?.voices || [];
     const defaultVoice: TTSVoice | null = availableVoices[0] || null;
     if (defaultVoice?.id === 'en-US-AnaNeural') return 'en-US-AriaNeural'; // avoid using AnaNeural as default
     return defaultVoice?.id || this.#currentVoiceId || 'en-US-AriaNeural';
@@ -238,9 +260,30 @@ export class EdgeTTSClient implements TTSClient {
 
   async resume() {
     if (this.#isPlaying || !this.#audioElement) return true;
+    // `stopInternal()` clears `audio.src` to release the blob URL. If the
+    // user later toggles play (handleTogglePlay → controller.resume →
+    // here), the audio element has no source and `play()` throws
+    // `NotSupportedError`. Bail out cleanly so the caller can re-prime
+    // playback by calling `start()` again instead of resuming.
+    if (!this.#audioElement.src) {
+      console.warn('[EdgeTTS] resume(): empty audio src, signalling caller to restart');
+      return false;
+    }
     const fadeCompensation = this.#getFadeCompensation();
     this.#audioElement.currentTime = Math.max(0, this.#audioElement.currentTime - fadeCompensation);
-    await this.#audioElement.play();
+    try {
+      await this.#audioElement.play();
+    } catch (err) {
+      // Some browsers (notably Safari/WebKit) reject play() with
+      // NotSupportedError when the src is technically set but not yet
+      // ready (e.g. blob URL revoked under the hood). Treat the same as
+      // an empty src and let the caller restart.
+      if (err instanceof Error && err.name === 'NotSupportedError') {
+        console.warn('[EdgeTTS] resume(): play() rejected with NotSupportedError, restarting');
+        return false;
+      }
+      throw err;
+    }
     this.#isPlaying = true;
     this.#startedAt = this.#audioElement.currentTime - this.#pausedAt;
     return true;

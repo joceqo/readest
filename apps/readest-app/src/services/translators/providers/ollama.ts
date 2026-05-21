@@ -6,6 +6,42 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { DEFAULT_AI_SETTINGS } from '@/services/ai/constants';
 import { TranslationProvider } from '../types';
 
+// Each in-flight chat request makes LM Studio (and other local servers) hold
+// a full KV cache slot. Translating a page with N paragraphs as
+// `Promise.all(...)` therefore multiplies RAM use by N. Cap concurrency so
+// burst translations don't blow up local-model memory; the total wall-clock
+// time is barely affected because the model itself is the bottleneck.
+export const MAX_CONCURRENT_LOCAL_REQUESTS = 2;
+
+const createSemaphore = (capacity: number) => {
+  let inUse = 0;
+  const queue: Array<() => void> = [];
+
+  const acquire = (): Promise<void> => {
+    if (inUse < capacity) {
+      inUse++;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      queue.push(resolve);
+    });
+  };
+
+  const release = () => {
+    const next = queue.shift();
+    if (next) {
+      // Hand the slot directly to the next waiter — `inUse` stays put.
+      next();
+    } else {
+      inUse--;
+    }
+  };
+
+  return { acquire, release };
+};
+
+const localRequestSemaphore = createSemaphore(MAX_CONCURRENT_LOCAL_REQUESTS);
+
 const SYSTEM_PROMPT = (sourceLang: string, targetLang: string) =>
   `You are a professional translator. Translate the user's text from ${sourceLang} to ${targetLang}.\n` +
   'Output ONLY the translated text. Do not wrap it in quotes. ' +
@@ -189,7 +225,12 @@ export const ollamaProvider: TranslationProvider = {
     return Promise.all(
       texts.map(async (text) => {
         if (!text?.trim().length) return text;
-        return translateOne(text, baseUrl, model, source, target);
+        await localRequestSemaphore.acquire();
+        try {
+          return await translateOne(text, baseUrl, model, source, target);
+        } finally {
+          localRequestSemaphore.release();
+        }
       }),
     );
   },

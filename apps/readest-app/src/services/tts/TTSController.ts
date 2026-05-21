@@ -177,22 +177,75 @@ export class TTSController extends EventTarget {
 
     this.#ttsSectionIndex = sectionIndex;
 
-    const currentSection = this.#getPrimaryContent();
-    if (currentSection?.index !== sectionIndex) {
+    const initialPrimary = this.#getPrimaryContent();
+    if (initialPrimary?.index !== sectionIndex) {
       await this.onSectionChange?.(sectionIndex);
     }
 
+    // Re-read primary content AFTER awaiting onSectionChange. The previous
+    // code captured `initialPrimary` once and then used its stale `.index`,
+    // which meant auto-advance to the next section always fell into the
+    // `createDocument()` branch — even when the view had successfully
+    // navigated. That fresh doc has no translation-target siblings, so the
+    // SSML had no <lang xml:lang="target"> blocks and TTS read the original
+    // language with whatever voice was preferred for that lang.
+    //
+    // After onSectionChange triggers view.renderer.goTo, the new iframe
+    // takes a moment to mount and the translation observer needs a tick to
+    // inject siblings. Poll briefly so we use the live (translated) doc
+    // when possible, and only fall back to createDocument() when the
+    // navigation hasn't landed in time.
+    let livePrimary = this.#getPrimaryContent();
+    if (livePrimary?.index !== sectionIndex) {
+      const MAX_WAIT_MS = 1500;
+      const STEP_MS = 50;
+      let waited = 0;
+      while (waited < MAX_WAIT_MS) {
+        await new Promise((r) => setTimeout(r, STEP_MS));
+        waited += STEP_MS;
+        livePrimary = this.#getPrimaryContent();
+        if (livePrimary?.index === sectionIndex && livePrimary?.doc) break;
+      }
+      // If TTS is in "translated only" mode, give the translation observer a
+      // few extra ticks to inject siblings into the freshly-loaded iframe
+      // before we extract SSML — otherwise the SSML walker captures English
+      // text that has no <lang xml:lang="target"> wrapper.
+      if (livePrimary?.index === sectionIndex && livePrimary?.doc && this.ttsTargetLang) {
+        for (let i = 0; i < 10; i++) {
+          if (livePrimary.doc.querySelector('.target-inner')) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+    }
+
     let doc: Document;
-    if (currentSection?.index === sectionIndex && currentSection?.doc) {
-      doc = currentSection.doc;
+    let docSource: 'live' | 'createDocument';
+    if (livePrimary?.index === sectionIndex && livePrimary?.doc) {
+      doc = livePrimary.doc;
+      docSource = 'live';
     } else {
       doc = await section.createDocument();
+      docSource = 'createDocument';
       const html = doc.querySelector('html');
       const lang = html?.getAttribute('lang') || html?.getAttribute('xml:lang') || '';
       if (html && !isValidLang(lang) && this.ttsLang) {
         html.setAttribute('lang', this.ttsLang);
         html.setAttribute('xml:lang', this.ttsLang);
       }
+    }
+
+    const translatedSiblings = doc.querySelectorAll?.('.target-inner').length ?? 0;
+    console.warn(
+      `[TTS-init] section=${sectionIndex} doc=${docSource} translatedSiblings=${translatedSiblings} ttsTargetLang=${this.ttsTargetLang || '(none)'}`,
+    );
+    if (this.ttsTargetLang && docSource === 'createDocument') {
+      console.warn(
+        `[TTS-init] WARNING: ttsTargetLang is set but using createDocument() — translation siblings will be absent, voice will fall back to source language.`,
+      );
+    } else if (this.ttsTargetLang && translatedSiblings === 0) {
+      console.warn(
+        `[TTS-init] WARNING: live doc has 0 .target-inner siblings — translation observer hasn't run on section ${sectionIndex} yet.`,
+      );
     }
 
     if (this.view.tts && this.view.tts.doc === doc) {
@@ -503,7 +556,19 @@ export class TTSController extends EventTarget {
 
   async resume() {
     this.state = 'playing';
-    await this.ttsClient.resume().catch((e) => this.error(e));
+    const resumed = await this.ttsClient.resume().catch((e) => {
+      this.error(e);
+      return false;
+    });
+    // EdgeTTSClient.resume() now returns false when the audio element has no
+    // playable src (typically because stopInternal() cleared it during a
+    // section transition or a previous stop). Fall through to start() so
+    // playback recovers instead of leaving the user with no audio and a
+    // NotSupportedError in the console.
+    if (resumed === false) {
+      console.warn('[TTSController] resume returned false, falling back to start()');
+      await this.start();
+    }
   }
 
   async stop() {

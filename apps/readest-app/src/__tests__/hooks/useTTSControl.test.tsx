@@ -163,6 +163,17 @@ vi.mock('@/utils/cfi', () => ({
 
 vi.mock('@/utils/misc', () => ({
   getLocale: () => 'en',
+  // useTranslator (pulled in by useTTSControl for SSML translation) eventually
+  // imports services/constants which uses stubTranslation as a no-op label
+  // wrapper at module-load time. Provide an identity implementation so the
+  // import chain doesn't crash in this test's mocked environment.
+  stubTranslation: (s: string) => s,
+  isCJKEnv: () => false,
+  getOSPlatform: () => 'macos',
+  getUserLocale: () => 'en',
+  getUserLang: () => 'en',
+  getTargetLang: () => 'EN',
+  isCaselessUILang: () => false,
 }));
 
 vi.mock('@/utils/ttsMetadata', () => ({

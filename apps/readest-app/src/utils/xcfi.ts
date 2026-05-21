@@ -294,10 +294,18 @@ export class XCFI {
       }
 
       // Find child elements with matching tag name, skipping cfi-inert elements
-      const children = Array.from(current.children).filter(
-        (child) =>
-          !XCFI.isCfiInert(child) && child.tagName.toLowerCase() === tagName?.toLowerCase(),
+      const nonInertChildren = Array.from(current.children).filter(
+        (child) => !XCFI.isCfiInert(child),
       );
+      const sameTagChildren = nonInertChildren.filter(
+        (child) => child.tagName.toLowerCase() === tagName?.toLowerCase(),
+      );
+
+      // KOReader's CREngine wraps loose body content in synthetic <div> elements
+      // ("autoBoxing") that don't exist in Readest's DOM. When the named tag has
+      // no matching children, fall back to any non-cfi-inert element child at the
+      // requested ordinal so such XPointers still resolve.
+      const children = sameTagChildren.length > 0 ? sameTagChildren : nonInertChildren;
 
       if (index >= children.length) {
         throw new Error(`Element index ${index} out of bounds for tag ${tagName}`);

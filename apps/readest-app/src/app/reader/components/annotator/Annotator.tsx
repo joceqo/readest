@@ -306,6 +306,27 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     detail.doc?.addEventListener('pointerup', handlePointerUp.bind(null, doc, index));
     detail.doc?.addEventListener('selectionchange', handleSelectionchange.bind(null, doc, index));
 
+    // Debug: log raw click / dblclick on the document so we can trace what
+    // user gesture is leading the annotation popup to open. `MouseEvent.detail`
+    // carries the click count (1 = single, 2 = double, 3 = triple).
+    detail.doc?.addEventListener('click', (ev: MouseEvent) => {
+      console.log('[Annotator] doc click', {
+        index,
+        clickCount: ev.detail,
+        target: (ev.target as Element | null)?.tagName,
+        x: ev.clientX,
+        y: ev.clientY,
+      });
+    });
+    detail.doc?.addEventListener('dblclick', (ev: MouseEvent) => {
+      console.log('[Annotator] doc dblclick', {
+        index,
+        target: (ev.target as Element | null)?.tagName,
+        x: ev.clientX,
+        y: ev.clientY,
+      });
+    });
+
     // For PDF selections, enable right-click context menu to directly open translator popup.
     if (bookData.isFixedLayout) {
       detail.doc?.addEventListener('contextmenu', (e: Event) => {
@@ -406,6 +427,10 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
   const onShowAnnotation = (event: Event) => {
     const detail = (event as CustomEvent).detail;
     const { value, index, range } = detail;
+    console.log('[Annotator] onShowAnnotation (tapped existing annotation)', {
+      index,
+      value,
+    });
     const { booknotes = [] } = getConfig(bookKey)!;
     const isNote = value.startsWith(NOTE_PREFIX);
     const cfi = isNote ? value.replace(NOTE_PREFIX, '') : value;
@@ -472,6 +497,18 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookKey, showingPopup, repositionPopups]);
+
+  // Dismiss any open selection popup when the user navigates away from the
+  // page that holds the selection (e.g. paginated swipe to next page, or
+  // scrolled mode scrolled past the selection). Without this, the popup
+  // lingers anchored to a CFI that's no longer visible.
+  useEffect(() => {
+    if (!showingPopup || !selection?.cfi || !progress?.location) return;
+    if (!isCfiInLocation(selection.cfi, progress.location)) {
+      handleDismissPopupAndSelection();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress?.location, showingPopup, selection?.cfi]);
 
   useEffect(() => {
     eventDispatcher.on('export-annotations', handleExportMarkdown);
@@ -639,6 +676,11 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
   }, [selection?.cfi, showAnnotationNotes, config.booknotes]);
 
   const handleShowAnnotPopup = () => {
+    console.log('[Annotator] showAnnotPopup', {
+      selectionCfi: selection?.cfi,
+      selectionText: selection?.text?.slice(0, 60),
+      annotated: selection?.annotated,
+    });
     if (!appService?.isMobile) {
       containerRef.current?.focus();
     }

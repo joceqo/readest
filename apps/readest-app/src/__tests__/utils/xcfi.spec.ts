@@ -530,4 +530,74 @@ describe('CFIToXPointerConverter', () => {
       expect(cfi).toMatch(/^epubcfi\(/);
     });
   });
+
+  describe('CREngine autoBox tolerance (lenient tag match)', () => {
+    it('should resolve /body/div[1] when body has no div (autoBoxed in CREngine)', () => {
+      // KOReader's CREngine wraps loose body content in synthetic <div> elements;
+      // the same content in Readest's DOM has no such wrapping element. Fall back
+      // to the nth non-cfi-inert element child so the XPointer still resolves.
+      const doc = new DOMParser().parseFromString(
+        `<html><body>
+          <section>
+            <p>Real content</p>
+          </section>
+        </body></html>`,
+        'text/html',
+      );
+
+      const converter = new XCFI(doc, 7);
+      const xp = '/body/DocFragment[8]/body/div[1]';
+      const cfi = converter.xPointerToCFI(xp);
+      expect(cfi).toMatch(/^epubcfi\(/);
+    });
+
+    it('should resolve through a tag mismatch and continue navigating children', () => {
+      const doc = new DOMParser().parseFromString(
+        `<html><body>
+          <section>
+            <p>Target paragraph</p>
+          </section>
+        </body></html>`,
+        'text/html',
+      );
+
+      const converter = new XCFI(doc, 0);
+      // div[1] doesn't exist; lenient match resolves to <section>, then /p finds <p>
+      const xp = '/body/DocFragment[1]/body/div[1]/p';
+      const cfi = converter.xPointerToCFI(xp);
+      expect(cfi).toMatch(/^epubcfi\(/);
+    });
+
+    it('should still throw when the ordinal is beyond all element children', () => {
+      const doc = new DOMParser().parseFromString(
+        `<html><body>
+          <section><p>only child</p></section>
+        </body></html>`,
+        'text/html',
+      );
+
+      const converter = new XCFI(doc, 0);
+      // Only one element child exists; div[2] is out of bounds even with lenient fallback
+      const xp = '/body/DocFragment[1]/body/div[2]';
+      expect(() => converter.xPointerToCFI(xp)).toThrow();
+    });
+
+    it('should prefer same-tag match over lenient fallback when both are possible', () => {
+      const doc = new DOMParser().parseFromString(
+        `<html><body>
+          <section>skipped by tag filter</section>
+          <div><p>real div content</p></div>
+        </body></html>`,
+        'text/html',
+      );
+
+      const converter = new XCFI(doc, 0);
+      // div[1] should resolve to the actual <div>, not the <section>
+      const xp = '/body/DocFragment[1]/body/div[1]/p';
+      const cfi = converter.xPointerToCFI(xp);
+      // Walk back: cfi should describe the p inside the div, i.e. body's 2nd element child
+      // body child indices in CFI: section=/2, div=/4, then p=/2 inside div
+      expect(cfi).toMatch(/\/4\/2/);
+    });
+  });
 });

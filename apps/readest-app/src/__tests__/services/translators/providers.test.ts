@@ -457,6 +457,61 @@ describe('ollamaProvider', () => {
     expect(ollamaProvider.name).toBe('ollama');
     expect(ollamaProvider.label).toBe('Local LLM');
   });
+
+  it('limits concurrent in-flight requests to LM Studio', async () => {
+    // Build a fetch mock where every call returns a controllable Deferred.
+    // This lets us count how many requests are *currently active* while the
+    // semaphore decides whether to start the next one.
+    const pending: { resolve: (v: unknown) => void }[] = [];
+    mockFetch.mockImplementation(() => {
+      let resolve!: (v: unknown) => void;
+      const promise = new Promise<unknown>((res) => {
+        resolve = res;
+      });
+      pending.push({ resolve });
+      // The provider awaits `.json()` on the response, so wrap accordingly.
+      return promise.then((content) => ({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content } }] }),
+      }));
+    });
+
+    // Yield enough microtasks for the semaphore + fetch chain to settle. Each
+    // released slot has to walk through several awaits (acquire resolve →
+    // translateOne → fetch → response.json) before the next mockFetch is hit,
+    // so we need more than 1–2 ticks.
+    const settle = async () => {
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    };
+
+    const { ollamaProvider, MAX_CONCURRENT_LOCAL_REQUESTS } =
+      await import('@/services/translators/providers/ollama');
+
+    // Kick off many translations at once.
+    const inputs = Array.from({ length: 8 }, (_, i) => `text-${i}`);
+    const resultPromise = ollamaProvider.translate(inputs, 'en', 'fr');
+
+    await settle();
+
+    // Only MAX_CONCURRENT_LOCAL_REQUESTS calls should be in flight, not all 8.
+    expect(pending.length).toBe(MAX_CONCURRENT_LOCAL_REQUESTS);
+
+    // Drain: each time we resolve all currently in-flight requests, the
+    // semaphore should admit exactly that many more (until inputs run out).
+    let resolved = 0;
+    while (resolved < inputs.length) {
+      for (let i = resolved; i < pending.length; i++) {
+        pending[i]!.resolve(`translated-${i}`);
+      }
+      resolved = pending.length;
+      await settle();
+    }
+
+    const result = await resultPromise;
+    expect(result).toEqual(inputs.map((_, i) => `translated-${i}`));
+    // We must have fired exactly one fetch per input (no extras, no drops).
+    expect(pending.length).toBe(inputs.length);
+  });
 });
 
 // ---------------------------------------------------------------------------
