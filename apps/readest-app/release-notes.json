@@ -1,5 +1,26 @@
 {
   "releases": {
+    "0.12.0": {
+      "date": "2026-05-21",
+      "notes": [
+        "Translation (NEW): Generate a stand-alone translated edition of any source book. Open it from the new “Translated edition” section in the Translate dropdown — opening it routes you to a separate reader URL with its own bookHash, so your annotations, progress, and KOReader sync on the source stay untouched.",
+        "Translation: TranslatedBookDoc wrapper lets foliate-view render the translated XHTML transparently — TTS, search, highlights and annotations all work on the translated text without code changes downstream.",
+        "Translation: Per-section artifact storage under Books/<hash>/translations/<provider>-<lang>/ with a manifest that tracks completedSections. Lazy backfill is supported (only sections the user reads need to be filled), and the same cache that powers the bilingual overlay is reused so previously translated sentences are free hits.",
+        "Translation: New TranslationJobRunner orchestrates end-to-end creation of a translated edition (idempotent, cancellable, resumable). UI shows progress via the existing hint/toast channel, throttled to once every five sections.",
+        "Translation: The reader’s TranslationToggler dropdown is now a single entry point — bilingual overlay (existing), Generate translated edition, and Open existing translated edition all live in one menu."
+      ]
+    },
+    "0.11.4": {
+      "date": "2026-05-21",
+      "notes": [
+        "XCFI: Lenient tag fallback so CREngine-style /body/DocFragment[N]/body/div[1] XPointers resolve when the foliate DOM has no <div>.",
+        "Reader: Annotation popup auto-dismisses when the user navigates past the selection.",
+        "TTS: Off-screen sections now speak the target language — SSML preprocess translates marks via the existing cache when no <lang xml:lang=target> blocks are present.",
+        "TTS: EdgeTTSClient.resume() guards against empty audio.src + NotSupportedError; controller falls back to start() so playback recovers instead of dying with a console error.",
+        "Translation: Bilingual overlay snapshots and restores the user’s CFI across language switches so the page doesn’t blank out from the pipeline reflow.",
+        "ollama: Concurrent /v1/chat/completions capped at 2 to keep per-page bursts from multiplying LM Studio’s KV-cache RAM."
+      ]
+    },
     "0.11.3": {
       "date": "2026-05-18",
       "notes": [
